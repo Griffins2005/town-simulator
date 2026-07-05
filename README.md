@@ -1,5 +1,7 @@
 # townsim — a turn-based agent-society simulator
 
+Repository: https://github.com/Griffins2005/town-simulator
+
 Agents that trade, vote, gossip, form reputations, embezzle, panic, and
 form political factions in a small simulated town. Phase 1 is a free,
 deterministic, rule-based engine; Phase 2 swaps in real LLM reasoning
