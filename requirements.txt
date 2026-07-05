@@ -1,0 +1,10 @@
+# townsim dependencies
+#
+# Phase 1 (main.py, stress_test.py): ZERO external dependencies.
+# Everything runs on the Python 3.10+ standard library alone.
+#
+# Phase 2 (main_llm.py) requires the Groq SDK:
+groq>=1.5.0
+
+# Python 3.10+ required (uses `X | Y` union type syntax and
+# `from __future__ import annotations` throughout).
