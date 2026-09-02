@@ -304,6 +304,78 @@ let LOCS = {}, AGENTS = {}, LLM_IDS = [];
 let history = [];
 const palette = ['#378ADD','#1D9E75','#D85A30','#D4537E','#7F77DD','#BA7517','#888780','#639922',
                   '#A32D2D','#993556','#0F6E56','#854F0B','#534AB7','#993C1D','#185FA5','#3B6D11'];
+// A SEPARATE small palette for faction rings, deliberately distinct from
+// the identity palette above -- if a faction's ring reused an identity
+// color, it would visually collide with whichever agent happens to own
+// that color, and "this ring means faction" vs "this fill means this
+// specific agent" would stop being two readable signals.
+const ringPalette = ['#F2C94C','#6FCF97','#56CCF2','#EB5757','#BB6BD9','#F2994A'];
+
+function factionColor(factionId) {
+  // Deterministic hash -> ring color, so a given faction_id always
+  // renders the same ring color across every frame and every agent in
+  // that faction, without the server needing to assign or send colors.
+  let hash = 0;
+  for (let i = 0; i < factionId.length; i++) hash = (hash * 31 + factionId.charCodeAt(i)) >>> 0;
+  return ringPalette[hash % ringPalette.length];
+}
+
+function drawAgentToken(id, cx, cy, factionId, factionLabel) {
+  // A villager token -- rounded-rect body + circular head -- replacing
+  // the old flat 9px identity-color dot. Three independent signals,
+  // each on its own visual channel so they never compete for the same
+  // pixels:
+  //   - identity: the agent's own palette color, fills both shapes
+  //     (unchanged from the old dot's coloring)
+  //   - faction: a colored ring worn around the whole figure, absent
+  //     if the agent belongs to no faction yet
+  //   - LLM-backed: a gold halo on the head only. This used to be a
+  //     plain white stroke on the old dot; gold reads as its own
+  //     distinct signal regardless of whichever color the faction ring
+  //     happens to be, where white risked blending into a pale ring.
+  const idx = parseInt(id.split('_')[1], 10);
+  const color = palette[idx % palette.length];
+  const isLLM = LLM_IDS.includes(id);
+
+  const grp = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  grp.setAttribute('transform', 'translate(' + cx + ',' + cy + ')');
+  grp.style.cursor = 'pointer';
+
+  const shadow = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+  shadow.setAttribute('cx', 0); shadow.setAttribute('cy', 15);
+  shadow.setAttribute('rx', 9); shadow.setAttribute('ry', 2.5);
+  shadow.setAttribute('fill', '#000'); shadow.setAttribute('opacity', '0.35');
+  grp.appendChild(shadow);
+
+  if (factionId) {
+    const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    ring.setAttribute('cx', 0); ring.setAttribute('cy', 1); ring.setAttribute('r', 13.5);
+    ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', factionColor(factionId));
+    ring.setAttribute('stroke-width', '2.5'); ring.setAttribute('opacity', '0.9');
+    grp.appendChild(ring);
+  }
+
+  const body = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  body.setAttribute('x', -7); body.setAttribute('y', -2);
+  body.setAttribute('width', 14); body.setAttribute('height', 14); body.setAttribute('rx', 5);
+  body.setAttribute('fill', color);
+  body.setAttribute('stroke', '#00000055'); body.setAttribute('stroke-width', '1');
+  grp.appendChild(body);
+
+  const head = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  head.setAttribute('cx', 0); head.setAttribute('cy', -9); head.setAttribute('r', 6.2);
+  head.setAttribute('fill', color);
+  head.setAttribute('stroke', isLLM ? '#f2c94c' : '#00000055');
+  head.setAttribute('stroke-width', isLLM ? '2.2' : '1');
+  grp.appendChild(head);
+
+  const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+  const nm = AGENTS[id] ? AGENTS[id].name : id;
+  title.textContent = nm + (factionLabel ? ' \u00b7 ' + factionLabel : '') + (isLLM ? ' \u00b7 LLM-backed' : '');
+  grp.appendChild(title);
+
+  return grp;
+}
 
 async function init() {
   const info = await (await fetch('/static_info')).json();
@@ -367,17 +439,18 @@ function renderFrame(frame) {
     const list = byLoc[key] || [];
     list.forEach((id, i) => {
       const angle = (i / Math.max(list.length, 1)) * 2 * Math.PI;
-      const rad = list.length > 1 ? 30 : 0;
+      // Wider than the old dot layout (was 30/14) -- villager tokens are
+      // roughly 20px wide by 26px tall including the head, versus the
+      // old 9px-radius dot, so the same spacing would start overlapping
+      // heads/rings once 3+ agents share a location.
+      const rad = list.length > 1 ? 36 : 0;
       const cx = loc.x + Math.cos(angle) * rad;
-      const cy = loc.y + 55 + Math.sin(angle) * 14;
-      const circ = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      circ.setAttribute('cx', cx); circ.setAttribute('cy', cy); circ.setAttribute('r', 9);
-      const idx = parseInt(id.split('_')[1], 10);
-      circ.setAttribute('fill', palette[idx % palette.length]);
-      if (LLM_IDS.includes(id)) { circ.setAttribute('stroke', '#fff'); circ.setAttribute('stroke-width', '2'); }
-      circ.style.cursor = 'pointer';
-      circ.addEventListener('click', () => showDetail(id, frame));
-      g.appendChild(circ);
+      const cy = loc.y + 58 + Math.sin(angle) * 17;
+      const factionId = (frame.factions || {})[id];
+      const factionLabel = factionId ? factionName(factionId, frame) : null;
+      const token = drawAgentToken(id, cx, cy, factionId, factionLabel);
+      token.addEventListener('click', () => showDetail(id, frame));
+      g.appendChild(token);
     });
   });
 
@@ -391,10 +464,17 @@ function renderFrame(frame) {
 
 function describeEvent(e) {
   const name = id => AGENTS[id] ? AGENTS[id].name : id;
+  // `said`, when present, escapes to text content only -- never inserted
+  // as raw HTML. An LLM-backed agent's utterance is untrusted text by
+  // the time it reaches the browser (see decision.py's docstring on
+  // malformed/hallucinated Intents); rendering it as an HTML string
+  // would turn a bad LLM output into stored XSS in every open tab
+  // watching this town. escapeHtml() is the only path `said` takes.
+  const quoted = e.said ? ': "' + escapeHtml(e.said) + '"' : '';
   let text = e.kind.replace(/_/g, ' ');
-  if (e.kind === 'speak') text = name(e.agent) + ' talks to ' + name(e.to);
+  if (e.kind === 'speak') text = name(e.agent) + ' talks to ' + name(e.to) + quoted;
   else if (e.kind === 'move') text = name(e.agent) + ' moves to ' + String(e.to).replace('_', ' ');
-  else if (e.kind === 'gossip') text = name(e.agent) + ' gossips about ' + name(e.about);
+  else if (e.kind === 'gossip') text = name(e.agent) + ' gossips about ' + name(e.about) + quoted;
   else if (e.kind === 'vote_cast') text = name(e.by) + ' votes ' + e.choice;
   else if (e.kind === 'trade_completed') text = name(e.from_) + ' trades with ' + name(e.to);
   else if (e.kind === 'corruption_scandal') text = name(e.agent) + ' embezzled ' + e.skimmed + '!';
@@ -402,7 +482,14 @@ function describeEvent(e) {
   else if (e.kind === 'crisis_ended') text = 'crisis: ' + e.crisis + ' ends';
   else if (e.kind === 'rule_proposed') text = name(e.by) + ' proposes ' + e.rule_type;
   else if (e.kind === 'rule_repealed') text = 'a rule was repealed';
+  else if (e.kind === 'faction_joined') text = name(e.agent) + ' aligns with ' + factionName(e.faction);
   return '<div style="padding:2px 0;border-bottom:1px solid #2e2b40">' + text + '</div>';
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = String(s);
+  return div.innerHTML;
 }
 
 let moneyChart, repChart;
@@ -448,13 +535,26 @@ function showDetail(id, frame) {
   const traits = Object.entries(a.traits).map(([k, v]) =>
     '<div style="display:flex;justify-content:space-between"><span style="color:#a39ee0">' +
     k.replace(/_/g, ' ') + '</span><span>' + v.toFixed(2) + '</span></div>').join('');
+  const factionId = (frame.factions || {})[id];
+  const factionLine = factionId ?
+    '<div>faction \u00b7 ' + escapeHtml(factionName(factionId, frame)) + '</div>' : '';
   document.getElementById('detailBody').innerHTML =
     '<div>location \u00b7 ' + st.location.replace('_', ' ') + '</div>' +
     '<div>money \u00b7 ' + st.money.toFixed(2) + '</div>' +
     '<div>reputation \u00b7 ' + st.reputation.toFixed(2) + '</div>' +
+    factionLine +
     '<div style="margin:6px 0;color:#a39ee0">traits</div>' + traits +
     '<div style="margin-top:8px;color:#6b6890;font-size:12px">brain: ' + a.decider_kind + '</div>';
   document.getElementById('detailOverlay').style.display = 'flex';
+}
+
+// Resolves a faction_id to its generated display name. Falls back to the
+// raw faction_id (an agent_id under the hood, see chaos.py's
+// _merge_into_faction) if this frame predates faction_names being sent,
+// or if `frame` isn't passed at all -- never throws on a missing lookup.
+function factionName(factionId, frame) {
+  const names = (frame && frame.faction_names) || (history.length ? history[history.length - 1].faction_names : {}) || {};
+  return names[factionId] || factionId;
 }
 
 init();

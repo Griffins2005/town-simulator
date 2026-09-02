@@ -238,7 +238,7 @@ class Engine:
         # whether they're placed before or after governance.tick in this
         # function. Placed here, with the rest of chaos housekeeping,
         # for readability.
-        chaos.update_factions(self.world, self.agents)
+        chaos.update_factions(self.world, self.agents, self.rng)
 
         self.world.tick += 1
 

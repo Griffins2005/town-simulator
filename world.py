@@ -101,6 +101,17 @@ class World:
         # every tick.
         self.factions: dict[str, str] = {}
 
+        # faction_id -> generated display name (e.g. "Riverside Compact"),
+        # populated once by chaos.py the first time a faction_id is newly
+        # created (never on a later merge into an already-named faction).
+        # Kept separate from `factions` above rather than replacing the
+        # agent_id-based faction_id itself: faction_id must stay a stable,
+        # never-renamed key (it's used as a dict key throughout chaos.py's
+        # vote-history tracking), while the display name is purely
+        # cosmetic and could even be regenerated later without touching
+        # any of that bookkeeping.
+        self.faction_names: dict[str, str] = {}
+
         # A small set of currently-active crisis tags (e.g.
         # "bank_run", "famine", "political_crisis"), populated and
         # cleared by chaos.py. Kept as a set of short string tags

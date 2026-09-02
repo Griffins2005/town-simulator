@@ -172,6 +172,13 @@ class Recorder:
             "active_rules": dict(world.active_rules),
             "treasury": round(world.treasury, 2),
             "events": new_events,
+            # agent_id -> faction_id and faction_id -> display name.
+            # Included every frame (like active_rules) rather than only
+            # on the tick a faction forms, so a client connecting mid-run
+            # (or a browser tab that missed earlier frames) still sees
+            # current faction membership without replaying history.
+            "factions": dict(world.factions),
+            "faction_names": dict(world.faction_names),
         }
 
     def agents_static_snapshot(self) -> dict:

@@ -115,6 +115,24 @@ UNREST_REPUTATION_DAMPING = 0.02
 FACTION_FORM_THRESHOLD_AGREEMENTS = 3
 FACTION_VOTE_CORRELATION = 0.3
 
+# Word bank for generated faction display names (see _generate_faction_name).
+# Deliberately a plain in-module list, not a data file or external call:
+# this project's stated policy for chaos.py is "zero external dependencies,"
+# and a faction name is flavor, not simulation-critical state -- pulling in
+# a file/network dependency for it would violate that policy for a feature
+# that doesn't need it. Kept small and neutral in tone on purpose: these
+# get displayed next to real simulation events (corruption scandals,
+# unrest), so nothing here should read as jokey in a way that clashes with
+# a run that's ALSO showing e.g. a bank run in progress.
+_FACTION_NAME_ADJECTIVES = [
+    "Riverside", "Northgate", "Lantern", "Harbor", "Millstone", "Ashwood",
+    "Cobblestone", "Hollow", "Amber", "Ironbound",
+]
+_FACTION_NAME_NOUNS = [
+    "Compact", "Circle", "Assembly", "Accord", "Coalition", "Guild",
+    "Alliance", "Bloc", "Union", "Council",
+]
+
 _buzz: dict = {}
 _agreement_counts: dict = {}
 # Tick of the most recent corruption scandal, or None if there hasn't
@@ -320,7 +338,7 @@ def update_unrest_state(world: World, agents: dict[str, Agent], rng: random.Rand
         world.log_event("crisis_ended", crisis=UNREST_TAG, gini=round(gini, 3))
 
 
-def update_factions(world: World, agents: dict[str, Agent]) -> None:
+def update_factions(world: World, agents: dict[str, Agent], rng: random.Random) -> None:
     """Called once per tick by engine.py, after governance.tick() has
     resolved any proposals closing this tick. Looks at THIS tick's
     vote_cast events and increments a same-side-agreement counter for
@@ -332,6 +350,15 @@ def update_factions(world: World, agents: dict[str, Agent]) -> None:
     faction's rolling vote history (see _faction_vote_history and
     get_faction_lean) -- done here, in the same pass over this tick's
     vote_cast events, rather than as a separate scan.
+
+    Args:
+        rng: injected, seeded random.Random, threaded down to
+            _merge_into_faction for display-name generation -- the same
+            reproducibility discipline every other randomized chaos.py
+            function follows (see this module's "chaos.py wasn't
+            actually seeded" fix in the project README): a faction name
+            must come out identical across two same-seed runs, the same
+            as a market shock or a corruption event does.
     """
     votes_this_tick = [e for e in world.event_log if e.get("tick") == world.tick and e.get("kind") == "vote_cast"]
     by_proposal: dict = {}
@@ -353,7 +380,7 @@ def update_factions(world: World, agents: dict[str, Agent]) -> None:
                 pair = tuple(sorted((a_id, b_id)))
                 _agreement_counts[pair] = _agreement_counts.get(pair, 0) + 1
                 if _agreement_counts[pair] >= FACTION_FORM_THRESHOLD_AGREEMENTS:
-                    _merge_into_faction(world, a_id, b_id)
+                    _merge_into_faction(world, a_id, b_id, rng)
 
 
 def get_faction_lean(world: World, agent_id: str) -> float:
@@ -371,19 +398,73 @@ def get_faction_lean(world: World, agent_id: str) -> float:
     return sum(1 for v in history if v == "yes") / len(history)
 
 
-def _merge_into_faction(world: World, a_id: str, b_id: str) -> None:
-    """Merge two agents into the same faction. If either already has a
-    faction, the other adopts it -- faction_id is whichever agent_id
-    became the faction's identity first, not a separately-generated ID.
+def _merge_into_faction(world: World, a_id: str, b_id: str, rng: random.Random) -> None:
+    """Merge two agents into the same faction. Four cases, by how many of
+    the two agents already have a faction:
+
+      - Neither has one: a brand-new faction forms, faction_id = a_id
+        (matches the pre-existing convention: faction_id is whichever
+        agent_id became the faction's identity first, never a
+        separately-generated ID). A display name is generated for it.
+      - Exactly one has one: the other simply joins it. No naming work --
+        the faction being joined is already named.
+      - Both already share the SAME faction: no-op. Two members of one
+        faction can keep crossing FACTION_FORM_THRESHOLD_AGREEMENTS
+        together after they've already merged; nothing left to do.
+      - Both have DIFFERENT, already-established factions: the two
+        factions merge into one. Every agent currently in the LOSING
+        faction is cascade-reassigned to the WINNING faction_id -- not
+        just b_id. Reassigning only the two agents directly involved in
+        THIS pairwise threshold-crossing event (an earlier version of
+        this function did exactly that) fragments the group: everyone
+        else still pointing at the losing faction_id gets silently left
+        behind, splitting one faction into two orphaned halves instead
+        of actually merging them. The losing faction's display name is
+        retired rather than kept as a dangling second name for a group
+        that is now, correctly, a single faction.
     """
-    existing = world.factions.get(a_id) or world.factions.get(b_id)
-    faction_id = existing or a_id
+    a_faction = world.factions.get(a_id)
+    b_faction = world.factions.get(b_id)
+
+    if a_faction and b_faction:
+        if a_faction == b_faction:
+            return  # already the same faction -- nothing to merge
+        # a_id's existing faction wins, arbitrarily but deterministically
+        # -- matches this function's original tie-break, which preferred
+        # a_id's faction_id whenever one was available.
+        winning_faction, losing_faction = a_faction, b_faction
+        for member_id, member_faction in list(world.factions.items()):
+            if member_faction == losing_faction:
+                world.factions[member_id] = winning_faction
+                world.log_event("faction_joined", agent=member_id, faction=winning_faction)
+        world.faction_names.pop(losing_faction, None)
+        return
+
+    faction_id = a_faction or b_faction or a_id
+    is_new_faction = a_faction is None and b_faction is None
     if world.factions.get(a_id) != faction_id:
         world.factions[a_id] = faction_id
         world.log_event("faction_joined", agent=a_id, faction=faction_id)
     if world.factions.get(b_id) != faction_id:
         world.factions[b_id] = faction_id
         world.log_event("faction_joined", agent=b_id, faction=faction_id)
+
+    if is_new_faction:
+        name = _generate_faction_name(rng)
+        world.faction_names[faction_id] = name
+        world.log_event("faction_formed", faction=faction_id, name=name)
+
+
+def _generate_faction_name(rng: random.Random) -> str:
+    """Generate a two-word display name (e.g. "Lantern Circle") from the
+    injected, seeded `rng` -- deterministic across same-seed runs, same
+    as every other randomized event in this module. See the module-level
+    word-bank comment for why this is a plain in-module list rather than
+    a file or external call.
+    """
+    adjective = rng.choice(_FACTION_NAME_ADJECTIVES)
+    noun = rng.choice(_FACTION_NAME_NOUNS)
+    return f"{adjective} {noun}"
 
 
 def reset_factions() -> None:

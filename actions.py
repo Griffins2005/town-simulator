@@ -146,7 +146,13 @@ def _speak(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent])
     SPEAK_RELATIONSHIP_DELTA = 0.02
     actor.adjust_relationship(target.agent_id, SPEAK_RELATIONSHIP_DELTA)
     target.adjust_relationship(actor.agent_id, SPEAK_RELATIONSHIP_DELTA)
-    world.log_event("speak", agent=actor.agent_id, to=target.agent_id)
+    # `said` is included in the world-level event (not just the per-agent
+    # memory entries above) so recorder.py's frame pass-through -- and by
+    # extension live_server.py's SSE feed -- can render the actual
+    # utterance without any recorder- or live_server-specific plumbing.
+    # This is the ONLY line that changes to make agent dialogue visible
+    # town-wide instead of only reconstructable from individual memories.
+    world.log_event("speak", agent=actor.agent_id, to=target.agent_id, said=intent.say or "")
     return ActionResult(True, "spoke")
 
 
@@ -185,7 +191,9 @@ def _gossip(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]
         if direction:
             listener.adjust_relationship(about_id, direction * GOSSIP_REPUTATION_NUDGE)
 
-    world.log_event("gossip", agent=actor.agent_id, about=about_id, heard_by=listeners)
+    # See _speak's comment above -- same reasoning applies here.
+    world.log_event("gossip", agent=actor.agent_id, about=about_id, heard_by=listeners,
+                     said=intent.say or "")
     return ActionResult(True, "gossiped")
 
 
