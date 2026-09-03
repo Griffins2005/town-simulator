@@ -1,16 +1,14 @@
 """
-record_demo.py -- Runs a town and saves a trace file for the visualizer.
+record_demo.py -- Runs a town and saves a portable trace.
 
 Run: python3 record_demo.py
-Output: trace.json (in the current directory)
+Output: trace.json in the current directory (200 ticks, seed 7).
 
-This uses RuleBasedDecider for all agents -- the same validated, free,
-deterministic setup as main.py -- run for longer (200 ticks) so the
-visualizer has enough history to show real patterns (trades, governance,
-reputation drift) when you scrub through it. Swapping in LLM-backed
-agents later (see main_llm.py for the pattern) requires zero changes to
-recorder.py or the trace format -- agents_static already records each
-agent's decider_kind, and frames don't care what produced an action.
+Rule-based agents only. Frames include metrics, decision records,
+inventions, campaigns, and open proposals. The live Society Lab
+(live_server.py) watches a town in real time; this file is for keeping
+a finished run. LLM-backed agents later need no recorder.py changes --
+agents_static already stores decider_kind.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ from town_factory import build_agents, build_world
 import chaos
 import economy
 import governance
+import inventions
 
 NUM_AGENTS = 16
 NUM_TICKS = 200
@@ -40,7 +39,9 @@ def main() -> None:
     governance.reset()
     chaos.reset_buzz()
     chaos.reset_factions()
+    chaos.reset_campaigns()
     chaos.reset_corruption_cooldown()
+    inventions.reset()
 
     world = build_world()
     agents = build_agents(rng, NUM_AGENTS)

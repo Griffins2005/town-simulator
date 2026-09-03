@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Eidolon Society Lab</title>
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" type="image/png" href="/static/favicon.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/live_shared.css">
+<style>
+  #injectMenu { display: none; position: absolute; bottom: 48px; left: 0; background: #151c2c; border: 1px solid var(--line); border-radius: 8px; padding: 8px; z-index: 8; min-width: 200px; }
+  #injectMenu button { display: inline-block; margin: 2px; }
+  #injectWrap { position: relative; }
+  .votechip { display: inline-block; margin-right: 8px; font-size: 12px; }
+  .votechip.yes { color: var(--good); }
+  .votechip.no { color: var(--bad); }
+  .votechip.abs { color: var(--muted); }
+  .side { display: flex; gap: 10px; margin-top: 8px; }
+  .side > div { flex: 1; }
+  .tiny { font-size: 11px; color: var(--muted); }
+  .tabs { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .tab { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+  .tab.on { background: #1a2438; color: var(--ink); }
+  #inspFace { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="app">
+  <nav id="rail">
+    <a class="logo" href="/" title="Eidolon Society Lab"><img src="/static/eidolon-appicon.png" alt="Eidolon Society Lab"></a>
+    <a class="navbtn active" href="/" title="Observe"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="tip">Observe</span></a>
+    <a class="navbtn" href="#" id="navPeople"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3 2.5-5 6-5s6 2 6 5"/><circle cx="17" cy="8" r="2.4"/><path d="M16 19c.3-2.2 1.8-3.8 4-4.4"/></svg><span class="tip">People</span></a>
+    <a class="navbtn" href="#" id="navRel"><svg viewBox="0 0 24 24"><circle cx="6" cy="8" r="2.2"/><circle cx="18" cy="7" r="2.2"/><circle cx="12" cy="17" r="2.2"/><path d="M8 9l3 6M16 9l-3 6M8.2 8h7"/></svg><span class="tip">Relationships</span></a>
+    <a class="navbtn" href="/analytics"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15v-4M12 15V8M16 15v-6"/></svg><span class="tip">Economy</span></a>
+    <a class="navbtn" href="#" id="navPol"><svg viewBox="0 0 24 24"><path d="M4 10h16M6 10v8M18 10v8M4 18h16M12 4l8 6H4z"/></svg><span class="tip">Politics</span></a>
+    <a class="navbtn" href="#" id="navFor"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/></svg><span class="tip">Forensics</span></a>
+    <a class="navbtn" href="#" id="navExp"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v5l-5 9a3 3 0 0 0 2.6 4.4h8.8A3 3 0 0 0 19 17l-5-9V3"/></svg><span class="tip">Experiments</span></a>
+  </nav>
+
+  <div id="shell">
+    <header id="topbar">
+      <h1><img class="wordmark" src="/static/eidolon-wordmark-ui.png" alt="Eidolon Society Lab"></h1>
+      <div id="vitals">
+        <div class="vital keep">Population<b id="popLabel">16</b></div>
+        <div class="vital keep">Treasury<b><span id="treasuryLabel">$0</span><span class="delta" id="treasuryDelta"></span></b></div>
+        <div class="vital">Gini<b id="giniLabel">—</b></div>
+        <div class="vital">Happiness<b id="happyLabel">—</b></div>
+        <div class="vital">Active laws<b id="lawsLabel">0</b></div>
+        <div class="vital">Proposals<b id="propLabel">0</b></div>
+        <div class="vital">Leader<b id="leaderLabel">—</b></div>
+        <div class="vital" id="crisisVital">Crises<b id="crisisLabel">0</b></div>
+        <div class="vital" id="alertVital">Anomaly<b id="alertLabel">0</b></div>
+      </div>
+      <div id="clock"><b id="clockTime">00:14</b><span id="clockDay">Day 1</span> · <span id="status">connecting</span></div>
+    </header>
+
+    <main id="stage">
+      <div id="townWrap">
+        <img id="townBg" src="/static/eidolon-town-night.png" alt="Eidolon town at night">
+        <svg id="mapSvg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice"></svg>
+        <div id="townMark"><img src="/static/eidolon-mark.png" alt=""></div>
+      </div>
+      <div id="voteFloat" class="float" style="display:none"></div>
+      <div id="inventFloat" class="float" style="display:none"></div>
+
+      <div id="hudLeft">
+        <section id="eventFeed" class="glass hudcard">
+          <h2 class="panel-title">Event feed</h2>
+          <div id="eventList" class="tiny">waiting for the first tick…</div>
+        </section>
+        <section id="proposalCard" class="glass hudcard">
+          <h2 class="panel-title">Proposal</h2>
+          <div id="proposalBody" class="tiny">none open</div>
+        </section>
+      </div>
+
+      <div id="hudRight">
+        <section id="forensicCard" class="glass hudcard">
+          <h2 class="panel-title">Forensics</h2>
+          <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+            <div id="inspFace"></div>
+            <div>
+              <div id="inspName" style="font-weight:700">click a resident</div>
+              <div id="inspMeta" class="tiny"></div>
+            </div>
+          </div>
+          <div id="trace"></div>
+          <div class="tabs">
+            <span class="tab on" data-tab="profile">Profile</span>
+            <span class="tab" data-tab="rel">Relationships</span>
+            <span class="tab" data-tab="res">Resources</span>
+            <span class="tab" data-tab="traits">Traits</span>
+            <span class="tab" data-tab="mem">Memory</span>
+          </div>
+          <div id="inspExtra" class="tiny" style="margin-top:8px"></div>
+        </section>
+      </div>
+
+      <div id="peopleDrawer" class="glass">
+        <h2 class="panel-title">People</h2>
+        <div id="peopleList"></div>
+      </div>
+      <div id="compareBox" class="glass compare"></div>
+    </main>
+
+    <footer id="dock">
+      <div id="controls">
+        <button id="pauseBtn" type="button">pause</button>
+        <button id="speedBtn" type="button">speed 1x</button>
+        <div id="injectWrap">
+          <button id="injectBtn" type="button">inject event</button>
+          <div id="injectMenu">
+            <div class="tiny" style="margin:4px 2px">Famine</div>
+            <button type="button" data-crisis="famine" data-intensity="mild">mild</button>
+            <button type="button" data-crisis="famine" data-intensity="serious">serious</button>
+            <button type="button" data-crisis="famine" data-intensity="severe">severe</button>
+            <div class="tiny" style="margin:6px 2px 4px">Unrest</div>
+            <button type="button" data-crisis="unrest" data-intensity="mild">mild</button>
+            <button type="button" data-crisis="unrest" data-intensity="serious">serious</button>
+            <button type="button" data-crisis="unrest" data-intensity="severe">severe</button>
+            <div class="tiny" style="margin:6px 2px 4px">Bank run</div>
+            <button type="button" data-crisis="bank_run" data-intensity="mild">mild</button>
+            <button type="button" data-crisis="bank_run" data-intensity="serious">serious</button>
+            <button type="button" data-crisis="bank_run" data-intensity="severe">severe</button>
+          </div>
+        </div>
+        <button id="markFork" type="button">change conditions</button>
+        <div id="tickClock"><b id="tickNum">Tick 0</b><div id="forkNote">mark two ticks to compare</div></div>
+      </div>
+      <div id="timelineWrap">
+        <div id="timeline"></div>
+        <div id="tlScale"><span id="tlStart">60</span><span id="tlMid">75</span><span id="tlEnd">90</span></div>
+        <div id="tlLegend">
+          <span><i style="background:#d7deee"></i>law proposed</span>
+          <span><i style="background:#3dce9a"></i>law enacted</span>
+          <span><i style="background:#4da3ff"></i>invention</span>
+          <span><i style="background:#f0a14a"></i>domain crossing</span>
+          <span><i style="background:#ef5b5b"></i>anomaly</span>
+        </div>
+      </div>
+      <div id="forks">
+        <button id="compareFork" class="primary" type="button">compare branches</button>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<script src="/live_shared.js"></script>
+<script>
+const VISUAL = {
+  farm: { x: 288, y: 250, label: 'Farm' },
+  town_hall: { x: 800, y: 198, label: 'Town Hall' },
+  market: { x: 416, y: 430, label: 'Market' },
+  workshop: { x: 1152, y: 360, label: 'Workshop' },
+  tavern: { x: 1088, y: 610, label: 'Tavern' }
+};
+const LANDMARKS = [
+  { x: 1312, y: 160, label: 'Clinic' },
+  { x: 768, y: 430, label: 'Park' },
+  { x: 352, y: 640, label: 'Bank' },
+  { x: 1280, y: 700, label: 'Homes' }
+];
+const timelineEvents = [];
+let showGraph = false;
+let extraTab = 'profile';
+
+function locOf(name) {
+  return VISUAL[name] || LOCS[name] || { x: 800, y: 450 };
+}
+
+function drawStaticTown() {
+  const svg = document.getElementById('mapSvg');
+  svg.innerHTML = '';
+  const defs = svgEl('defs', {});
+  defs.innerHTML = '<filter id="glow"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+  svg.appendChild(defs);
+  Object.entries(VISUAL).forEach(([key, loc]) => {
+    const t = svgEl('text', {
+      x: loc.x, y: loc.y - 36, 'text-anchor': 'middle', fill: '#e8edf7',
+      'font-size': 15, 'font-weight': 700, filter: 'url(#glow)'
+    });
+    t.textContent = loc.label;
+    svg.appendChild(t);
+  });
+  LANDMARKS.forEach(loc => {
+    const t = svgEl('text', {
+      x: loc.x, y: loc.y - 28, 'text-anchor': 'middle', fill: '#c5cde0',
+      'font-size': 13, 'font-weight': 600, opacity: 0.9
+    });
+    t.textContent = loc.label;
+    svg.appendChild(t);
+  });
+  svg.appendChild(svgEl('g', { id: 'graphLayer' }));
+  svg.appendChild(svgEl('g', { id: 'agentLayer' }));
+}
+
+function layoutCluster(n, loc) {
+  if (n <= 0) return [];
+  if (n === 1) return [{ x: loc.x, y: loc.y + 28 }];
+  const cols = Math.min(4, Math.ceil(Math.sqrt(n)));
+  const gapX = 28, gapY = 34;
+  const startX = loc.x - ((cols - 1) * gapX) / 2;
+  const startY = loc.y + 18;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push({ x: startX + (i % cols) * gapX, y: startY + Math.floor(i / cols) * gapY });
+  return out;
+}
+
+function drawAgentToken(id, cx, cy, factionId, factionLabel) {
+  const color = agentColor(id);
+  const isLLM = LLM_IDS.includes(id);
+  const grp = svgEl('g', { transform: 'translate(' + cx + ',' + cy + ')', class: 'hit' });
+  grp.appendChild(svgEl('ellipse', { cx: 0, cy: 12, rx: 8, ry: 2.4, fill: '#000', opacity: 0.45 }));
+  if (factionId) {
+    grp.appendChild(svgEl('circle', { cx: 0, cy: 0, r: 12, fill: 'none', stroke: factionColor(factionId), 'stroke-width': 2.4 }));
+  }
+  const expelled = latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].expelled;
+  const muted = expelled || (latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].can_vote === false);
+  grp.appendChild(svgEl('circle', {
+    cx: 0, cy: -1, r: 8, fill: color,
+    stroke: expelled ? '#ef5b5b' : (isLLM ? '#e8c36a' : '#061018'),
+    'stroke-width': expelled ? 2.4 : (isLLM ? 2 : 1),
+    opacity: muted ? 0.55 : 1
+  }));
+  const label = svgEl('text', { x: 0, y: 22, 'text-anchor': 'middle', 'font-size': 9, fill: '#d7deee' });
+  label.textContent = nameOf(id).split(' ')[0];
+  grp.appendChild(label);
+  const title = svgEl('title', {});
+  title.textContent = nameOf(id) + (factionLabel ? ' · ' + factionLabel : '') + (isLLM ? ' · LLM' : '');
+  grp.appendChild(title);
+  return grp;
+}
+
+function updateTown(frame) {
+  const g = document.getElementById('agentLayer');
+  const net = document.getElementById('graphLayer');
+  if (!g) return;
+  g.innerHTML = '';
+  net.innerHTML = '';
+  const pos = {};
+  const byLoc = {};
+  Object.keys(VISUAL).forEach(k => byLoc[k] = []);
+  Object.entries(frame.agents).forEach(([id, st]) => { (byLoc[st.location] = byLoc[st.location] || []).push(id); });
+  Object.entries(byLoc).forEach(([key, list]) => {
+    const loc = locOf(key);
+    const spots = layoutCluster(list.length, loc);
+    list.forEach((id, i) => {
+      const factionId = (frame.factions || {})[id];
+      pos[id] = spots[i];
+      const token = drawAgentToken(id, spots[i].x, spots[i].y, factionId, factionId ? factionName(factionId, frame) : null);
+      token.addEventListener('click', () => selectAgent(id));
+      g.appendChild(token);
+    });
+  });
+  if (showGraph) {
+    (frame.relationship_edges || []).forEach(([a, b, w]) => {
+      if (!pos[a] || !pos[b]) return;
+      net.appendChild(svgEl('line', {
+        x1: pos[a].x, y1: pos[a].y, x2: pos[b].x, y2: pos[b].y,
+        stroke: w >= 0 ? '#3dce9a' : '#ef5b5b',
+        'stroke-width': Math.max(1, Math.abs(w) * 2.2),
+        opacity: 0.55
+      }));
+    });
+    commWindow.forEach(e => {
+      if (!pos[e.a] || !pos[e.b]) return;
+      net.appendChild(svgEl('line', {
+        x1: pos[e.a].x, y1: pos[e.a].y, x2: pos[e.b].x, y2: pos[e.b].y,
+        stroke: '#e8c36a', 'stroke-width': 0.8, opacity: 0.35, 'stroke-dasharray': '3 3'
+      }));
+    });
+  }
+  placeFloats(frame, pos);
+}
+
+function placeFloats(frame, pos) {
+  const svg = document.getElementById('mapSvg');
+  const box = svg.getBoundingClientRect();
+  const stage = document.getElementById('stage').getBoundingClientRect();
+  const sx = box.width / 1600, sy = box.height / 900;
+  const toScreen = (x, y) => ({
+    left: (box.left - stage.left) + x * sx,
+    top: (box.top - stage.top) + y * sy
+  });
+  const hall = locOf('town_hall');
+  const props = frame.open_proposals || [];
+  const vf = document.getElementById('voteFloat');
+  if (props.length) {
+    const p = props[0];
+    const votes = Object.values(p.votes || {});
+    const yes = votes.filter(v => v === 'yes').length;
+    const no = votes.filter(v => v === 'no').length;
+    const abs = votes.length - yes - no;
+    const pt = toScreen(hall.x + 90, hall.y - 10);
+    vf.style.display = 'block';
+    vf.style.left = pt.left + 'px';
+    vf.style.top = pt.top + 'px';
+    const need = p.quorum_needed != null ? p.quorum_needed : '';
+    vf.innerHTML = '<div class="tiny">' + (p.deadlock ? 'DEADLOCK' : (p.vote_rules && p.vote_rules.emergency ? 'EMERGENCY' : 'LIVE VOTE')) +
+      '</div><b>' + escapeHtml((p.rule_type || 'proposal').replace(/_/g, ' ')) +
+      '</b><div><span class="votechip yes">YES ' + yes + '</span><span class="votechip no">NO ' + no +
+      '</span><span class="votechip abs">ABS ' + abs + '</span></div>' +
+      (need !== '' ? '<div class="tiny">quorum ' + votes.length + '/' + need + '</div>' : '');
+  } else vf.style.display = 'none';
+
+  const invs = frame.inventions || [];
+  const inf = document.getElementById('inventFloat');
+  if (invs.length) {
+    const newest = invs[invs.length - 1];
+    const shop = locOf('workshop');
+    const pt = toScreen(shop.x - 40, shop.y - 70);
+    inf.style.display = 'block';
+    inf.style.left = pt.left + 'px';
+    inf.style.top = pt.top + 'px';
+    inf.innerHTML = '<div class="tiny" style="color:#4da3ff">NEW INVENTION</div><b>' +
+      escapeHtml(newest.name || newest.kind) + '</b><div class="tiny">' + nameOf(newest.inventor) + '</div>';
+  } else inf.style.display = 'none';
+}
+
+function selectAgent(id) {
+  selectedId = id;
+  if (latestFrame) updateInspector(id, latestFrame);
+}
+
+function consideredBars(considered) {
+  if (!considered.length) return 'none recorded';
+  const max = Math.max(...considered.map(c => Number(c.weight) || 0), 1);
+  return considered.map(c => {
+    const w = Number(c.weight) || 0;
+    const pct = Math.round(100 * w / (considered.reduce((s, x) => s + (Number(x.weight) || 0), 0) || 1));
+    return '<div>' + escapeHtml(c.action) + ' ' + pct + '% — ' + escapeHtml(c.reason || '') +
+      '<div class="bar"><i style="width:' + Math.round(100 * w / max) + '%"></i></div></div>';
+  }).join('');
+}
+
+function updateInspector(id, frame) {
+  if (!id || !frame || !frame.agents[id]) return;
+  const rec = (frame.decision_records || []).find(r => r.agent_id === id);
+  const st = frame.agents[id];
+  const fid = (frame.factions || {})[id];
+  document.getElementById('inspName').textContent = nameOf(id);
+  document.getElementById('inspMeta').textContent =
+    'Age ' + (24 + (parseInt(id.split('_')[1], 10) || 0)) + ' · ' + roleOf(id) +
+    (fid ? ' · ' + factionName(fid, frame) : ' · unaffiliated');
+  const face = document.getElementById('inspFace');
+  face.style.background = agentColor(id);
+  face.textContent = initials(id);
+  if (!rec) {
+    document.getElementById('trace').innerHTML = '<div class="tiny">no decision record this tick</div>';
+  } else {
+    const perc = rec.perceived || {};
+    const val = rec.validation || {};
+    document.getElementById('trace').innerHTML =
+      row('Perceived', escapeHtml(perc.location || st.location) + ' · problems: ' + escapeHtml((perc.problems || []).join(', ') || 'none')) +
+      row('Remembered', (rec.retrieved_memories || []).map(escapeHtml).join('<br>') || 'none') +
+      row('Considered', consideredBars(rec.considered_actions || [])) +
+      row('Chose', escapeHtml((rec.chosen_intent || {}).action || '') + ' ' + escapeHtml(JSON.stringify((rec.chosen_intent || {}).args || {}))) +
+      row('Validated', (val.ok ? 'Legal' : 'Rejected') + ' — ' + escapeHtml(val.reason || '')) +
+      row('Consequence', (rec.consequences || []).map(escapeHtml).join('; ') || 'none');
+  }
+  renderExtra(id, frame);
+}
+
+function row(label, body) {
+  return '<div class="stage-row"><div class="lbl">' + label + '</div><div class="body">' + body + '</div></div>';
+}
+
+function renderExtra(id, frame) {
+  const st = frame.agents[id];
+  const a = AGENTS[id] || {};
+  const box = document.getElementById('inspExtra');
+  if (extraTab === 'profile') {
+    box.innerHTML = (st.location || '').replace('_', ' ') + ' · brain ' + escapeHtml(a.decider_kind || 'rule') +
+      (LLM_IDS.includes(id) ? ' (LLM)' : '');
+  } else if (extraTab === 'rel') {
+    const edges = (frame.relationship_edges || []).filter(e => e[0] === id || e[1] === id);
+    box.innerHTML = edges.length
+      ? edges.map(e => nameOf(e[0] === id ? e[1] : e[0]) + ' · ' + (e[2] >= 0 ? 'ally ' : 'rival ') + Number(e[2]).toFixed(2)).join('<br>')
+      : 'no strong ties yet';
+  } else if (extraTab === 'res') {
+    const food = (st.inventory && st.inventory.food != null) ? Number(st.inventory.food).toFixed(2) : '0';
+    box.innerHTML = 'Money $' + st.money.toFixed(2) + '<br>Reputation ' + Math.round(st.reputation * 100) +
+      '<br>Food ' + food +
+      '<br>' + (st.expelled ? 'expelled' : (st.can_vote === false ? 'vote suspended' : 'may vote'));
+  } else if (extraTab === 'traits') {
+    box.innerHTML = Object.entries(a.traits || {}).map(([k, v]) =>
+      k.replace(/_/g, ' ') + ' · ' + Number(v).toFixed(2)).join('<br>') || 'unknown';
+  } else {
+    const rec = (frame.decision_records || []).find(r => r.agent_id === id);
+    box.innerHTML = ((rec && rec.retrieved_memories) || []).map(escapeHtml).join('<br>') || 'no memories retrieved';
+  }
+}
+
+function updateProposal(frame) {
+  const props = frame.open_proposals || [];
+  const el = document.getElementById('proposalBody');
+  if (!props.length) { el.innerHTML = 'none open'; return; }
+  const p = props[0];
+  const votes = Object.entries(p.votes || {});
+  const yes = votes.filter(([, v]) => v === 'yes');
+  const no = votes.filter(([, v]) => v === 'no');
+  const abs = votes.filter(([, v]) => v !== 'yes' && v !== 'no');
+  const rules = p.vote_rules || {};
+  const eligible = p.eligible || Object.keys(frame.agents).length || 1;
+  const need = p.quorum_needed || Math.ceil((rules.quorum || 0.4) * eligible);
+  const q = need ? Math.round(100 * Math.min(1, votes.length / need)) : 0;
+  const target = (p.rule_args || {}).target_agent;
+  const sev = rules.severity || '';
+  const passPct = Math.round(100 * (rules.pass || 0.5));
+  el.innerHTML = '<b>PROPOSAL: ' + escapeHtml((p.rule_type || '').replace(/_/g, ' ').toUpperCase()) + '</b>' +
+    (p.deadlock ? '<div class="tiny" style="color:#ef5b5b;margin-top:4px">DEADLOCK — leader is lobbying</div>' : '') +
+    '<div class="tiny" style="margin:6px 0">#' + p.proposal_id +
+    (target ? ' · ' + escapeHtml(nameOf(target)) : '') +
+    ' · ' + votes.length + ' ballots · ' + escapeHtml(sev) +
+    (rules.emergency ? ' emergency' : '') + '</div>' +
+    '<div><span class="votechip yes">YES ' + yes.length + '</span><span class="votechip no">NO ' + no.length +
+    '</span><span class="votechip abs">ABSENT ' + Math.max(0, eligible - votes.length) + '</span></div>' +
+    '<div class="tiny" style="margin-top:6px">quorum ' + votes.length + '/' + need +
+    ' · pass at ' + passPct + '% of ballots</div>' +
+    '<div class="bar"><i style="width:' + q + '%"></i></div>' +
+    '<div class="side"><div><div class="tiny">Top supporters</div>' +
+    (yes.slice(0, 3).map(([id]) => nameOf(id)).join('<br>') || '—') +
+    '</div><div><div class="tiny">Top opponents</div>' +
+    (no.slice(0, 3).map(([id]) => nameOf(id)).join('<br>') || '—') + '</div></div>';
+}
+
+function updateEvents() {
+  document.getElementById('eventList').innerHTML = feedLog.slice(0, 12).map(e => e.html).join('') ||
+    '<div class="tiny">quiet tick</div>';
+}
+
+function markerColor(kind) {
+  if (kind === 'rule_proposed') return '#d7deee';
+  if (kind === 'proposal_closed' || kind === 'rule_repealed') return '#3dce9a';
+  if (kind === 'invention' || kind === 'invention_adopted') return '#4da3ff';
+  if (kind === 'domain_crossing') return '#f0a14a';
+  if (['crisis_started','corruption_scandal','market_shock'].includes(kind) || kind === 'anomaly') return '#ef5b5b';
+  return '#9b8cff';
+}
+
+function updateTimeline(frame) {
+  (frame.events || []).forEach(e => {
+    if (notableKind(e.kind)) timelineEvents.push({ tick: frame.tick, kind: e.kind });
+  });
+  if (((frame.metrics || {}).crossings || []).length) {
+    timelineEvents.push({ tick: frame.tick, kind: 'domain_crossing' });
+  }
+  if (((frame.metrics || {}).anomaly_flags || []).length) {
+    timelineEvents.push({ tick: frame.tick, kind: 'anomaly' });
+  }
+  const tl = document.getElementById('timeline');
+  tl.innerHTML = '';
+  const ticks = timelineEvents.map(e => e.tick);
+  const lo = ticks.length ? Math.max(0, Math.min(...ticks, frame.tick) - 2) : Math.max(0, frame.tick - 20);
+  const hi = Math.max(frame.tick, lo + 20);
+  timelineEvents.forEach(e => {
+    if (e.tick < lo) return;
+    const x = ((e.tick - lo) / (hi - lo)) * 100;
+    const m = document.createElement('div');
+    m.className = 'mark';
+    m.style.left = x + '%';
+    m.style.background = markerColor(e.kind);
+    m.title = 't' + e.tick + ' · ' + e.kind.replace(/_/g, ' ');
+    tl.appendChild(m);
+  });
+  document.getElementById('tlStart').textContent = String(lo);
+  document.getElementById('tlMid').textContent = String(Math.round((lo + hi) / 2));
+  document.getElementById('tlEnd').textContent = String(hi);
+}
+
+function renderPeople(frame) {
+  const el = document.getElementById('peopleList');
+  el.innerHTML = Object.keys(frame.agents).map(id => {
+    const fid = (frame.factions || {})[id];
+    return '<div class="person" data-id="' + id + '"><div class="avatar" style="background:' + agentColor(id) +
+      '"></div><div><b>' + escapeHtml(nameOf(id)) + '</b><div class="tiny">' + roleOf(id) +
+      (fid ? ' · ' + escapeHtml(factionName(fid, frame)) : '') +
+      (id === frame.town_leader_id ? ' · leader' : '') +
+      (frame.agents[id].expelled ? ' · expelled' : (frame.agents[id].can_vote === false ? ' · no vote' : '')) +
+      ' · ' + escapeHtml(String(frame.agents[id].location || '').replace('_', ' ')) + '</div></div></div>';
+  }).join('');
+  el.querySelectorAll('.person').forEach(node => {
+    node.addEventListener('click', () => selectAgent(node.dataset.id));
+  });
+}
+
+function renderFrame(frame) {
+  updateHeader(frame);
+  recordMetrics(frame);
+  ingestFeed(frame);
+  updateTown(frame);
+  updateEvents();
+  updateProposal(frame);
+  updateTimeline(frame);
+  renderPeople(frame);
+  if (!selectedId) {
+    const first = Object.keys(frame.agents || {})[0];
+    if (first) selectedId = first;
+  }
+  if (selectedId) updateInspector(selectedId, frame);
+}
+
+function togglePeople(on) {
+  document.getElementById('peopleDrawer').style.display = on ? 'block' : 'none';
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    extraTab = tab.dataset.tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === tab));
+    if (selectedId && latestFrame) renderExtra(selectedId, latestFrame);
+  });
+});
+document.getElementById('navPeople').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  const drawer = document.getElementById('peopleDrawer');
+  togglePeople(drawer.style.display !== 'block');
+});
+document.getElementById('navRel').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  showGraph = !showGraph;
+  ev.currentTarget.classList.toggle('active', showGraph);
+  if (latestFrame) updateTown(latestFrame);
+});
+document.getElementById('navPol').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  document.getElementById('proposalCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  document.getElementById('proposalCard').style.boxShadow = '0 0 0 1px #2ec4b6';
+  setTimeout(() => { document.getElementById('proposalCard').style.boxShadow = ''; }, 1200);
+});
+document.getElementById('navFor').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  document.getElementById('forensicCard').style.boxShadow = '0 0 0 1px #2ec4b6';
+  setTimeout(() => { document.getElementById('forensicCard').style.boxShadow = ''; }, 1200);
+});
+document.getElementById('navExp').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  document.getElementById('dock').style.outline = '1px solid #2ec4b6';
+  setTimeout(() => { document.getElementById('dock').style.outline = ''; }, 1200);
+});
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('#injectWrap')) {
+    const menu = document.getElementById('injectMenu');
+    if (menu) menu.style.display = 'none';
+  }
+});
+
+bootLab(drawStaticTown);
+</script>
+</body>
+</html>

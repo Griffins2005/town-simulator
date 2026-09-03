@@ -36,11 +36,15 @@ from __future__ import annotations
 import random
 
 from agent import Agent
-from decision import Intent, Perception
+from decision import DecisionDraft, Intent, Perception
 import actions
+import analytics
 import chaos
+import decision_record
 import economy
 import governance
+import inventions
+import town_factory
 from world import World
 
 
@@ -123,6 +127,7 @@ class Engine:
         # housekeeping) correctly show no buzz yet, rather than raising
         # on a missing attribute.
         self._current_buzz: dict = {}
+        self.last_decision_records: list[dict] = []
 
     def step(self) -> None:
         """Advance the simulation by exactly one tick."""
@@ -134,28 +139,48 @@ class Engine:
         economy.regenerate_resources(self.world)
 
         intents: dict = {}
+        drafts: dict[str, DecisionDraft] = {}
+        perceptions: dict = {}
+        reused: dict[str, bool] = {}
 
         # Pass 1: perceive + decide (or reuse cached intent), for every agent.
         for agent_id, agent in self.agents.items():
             perception = self._build_perception(agent)
+            perceptions[agent_id] = perception
             if self._should_think(agent_id, perception):
-                intent = agent.decider.decide(agent_id, perception)
-                self._cached_intent[agent_id] = intent
+                if hasattr(agent.decider, "deliberate"):
+                    draft = agent.decider.deliberate(agent_id, perception)
+                else:
+                    draft = DecisionDraft(intent=agent.decider.decide(agent_id, perception))
+                self._cached_intent[agent_id] = draft
                 self._last_thought_tick[agent_id] = self.world.tick
+                reused[agent_id] = False
             else:
-                intent = self._cached_intent.get(agent_id) or _IDLE_INTENT
-            intents[agent_id] = intent
+                cached = self._cached_intent.get(agent_id)
+                if isinstance(cached, DecisionDraft):
+                    draft = cached
+                else:
+                    draft = DecisionDraft(intent=cached or _IDLE_INTENT)
+                reused[agent_id] = True
+            drafts[agent_id] = draft
+            intents[agent_id] = draft.intent
 
-        # Pass 2: execute all intents. Separated from decide (see module
-        # docstring) so no agent's action this tick can be perceived by
-        # another agent's decision this same tick.
+        # Pass 2: execute all intents, then write the six-stage record.
+        records = []
         for agent_id, intent in intents.items():
-            actions.execute(self.agents[agent_id], intent, self.world, self.agents)
+            result = actions.execute(self.agents[agent_id], intent, self.world, self.agents)
+            records.append(decision_record.assemble(
+                agent_id, self.world.tick, perceptions[agent_id],
+                drafts[agent_id], result, reused[agent_id],
+            ).to_dict())
+        self.last_decision_records = records
 
         # Clock-driven housekeeping: tally any proposals whose voting
         # window just closed. Runs after agent actions so a vote cast
         # earlier THIS tick is still counted before tallying.
         governance.tick(self.world, self.agents)
+        governance.restore_expired_suspensions(self.world, self.agents)
+        self._welcome_replacements()
 
         # If a wealth_tax rule is active and this tick is a collection
         # tick, collect and redistribute. Runs after proposal tallying
@@ -209,7 +234,7 @@ class Engine:
         # regeneration at the top of step()) so a shock's effect is
         # visible starting NEXT tick's work actions, not retroactively
         # altering what already happened this tick.
-        chaos.apply_market_shocks_if_triggered(self.world, self.rng)
+        chaos.apply_market_shocks_if_triggered(self.world, self.rng, self.agents)
 
         # Corruption runs AFTER wealth_tax/demurrage/redistribution have
         # all settled this tick's treasury -- an embezzler skims from
@@ -223,6 +248,7 @@ class Engine:
         # ended up this tick, not a transient mid-tick value.
         chaos.update_bank_run_state(self.world, self.agents)
         chaos.update_unrest_state(self.world, self.agents, self.rng)
+        chaos.tick_crises(self.world, self.agents, self.rng)
 
         # Speculation buzz reads THIS tick's gossip events (already in
         # world.event_log from Pass 2's actions.execute calls above),
@@ -239,6 +265,11 @@ class Engine:
         # function. Placed here, with the rest of chaos housekeeping,
         # for readability.
         chaos.update_factions(self.world, self.agents, self.rng)
+
+        # Gossip-storm / notice-board update. Reads THIS tick's gossip
+        # events (already in the log) and may emit influence_campaign
+        # events that recorder/live_server pick up the same tick.
+        chaos.update_influence_campaigns(self.world, self.agents)
 
         self.world.tick += 1
 
@@ -258,6 +289,8 @@ class Engine:
         last = self._last_thought_tick[agent_id]
         if last < 0:
             return True
+        if perception.active_crises:
+            return True
         if perception.location_agents:
             return True
         if perception.pending_trade_offers:
@@ -275,7 +308,12 @@ class Engine:
         # risk -- this is purely a cost/call-volume fix.
         unvoted = [p for p in perception.open_proposals
                    if agent_id not in p.get("votes", {})]
-        if unvoted:
+        if unvoted and perception.can_vote:
+            return True
+        if perception.lobby_targets and (
+            perception.is_leader
+            or any(prop.get("proposed_by") == agent_id for prop in perception.open_proposals)
+        ):
             return True
         if self.world.tick - last >= PASSIVE_THINK_INTERVAL:
             return True
@@ -290,6 +328,18 @@ class Engine:
                         if a.location == agent.location and aid != agent.agent_id]
         recent = [m.as_text() for m in agent.memory.recent(5)]
         relationships = {oid: agent.relationship_with(oid) for oid in others_here}
+        open_props = governance.open_proposals_snapshot(self.world, self.agents)
+        leader = governance.town_leader(self.agents)
+        notorious = [
+            {"id": a.agent_id, "name": a.persona.name, "reputation": round(a.reputation, 3)}
+            for a in sorted(self.agents.values(), key=lambda x: x.reputation)
+            if not a.expelled and a.reputation < 0.28 and a.agent_id != agent.agent_id
+        ][:4]
+        newcomers = [
+            {"id": a.agent_id, "name": a.persona.name}
+            for a in self.agents.values()
+            if not a.expelled and not a.voting_rights
+        ]
 
         return Perception(
             self_id=agent.agent_id,
@@ -303,7 +353,7 @@ class Engine:
             recent_memories=recent,
             relationships=relationships,
             pending_trade_offers=economy.offers_for(agent.agent_id),
-            open_proposals=governance.open_proposals_snapshot(),
+            open_proposals=open_props,
             tick=self.world.tick,
             self_industriousness=agent.persona.industriousness,
             self_generosity=agent.persona.generosity,
@@ -311,8 +361,72 @@ class Engine:
             self_rule_respect=agent.persona.rule_respect,
             self_risk_tolerance=agent.persona.risk_tolerance,
             active_crises=set(self.world.active_crises),
+            crisis_intensity=dict(self.world.crisis_intensity),
             self_faction=self.world.factions.get(agent.agent_id),
+            self_faction_name=(
+                self.world.faction_names.get(self.world.factions[agent.agent_id])
+                if agent.agent_id in self.world.factions else None
+            ),
+            nearby_names={aid: self.agents[aid].persona.name for aid in others_here},
+            public_headlines=analytics.build_public_headlines(self.world, self.agents),
+            notice_board=list(self.world.notice_board),
             speculation_buzz=dict(self._current_buzz),
             faction_lean=chaos.get_faction_lean(self.world, agent.agent_id),
             enacted_proposals=governance.enacted_proposals_snapshot(),
+            observed_problems=inventions.observed_problems(self.world, self.agents),
+            invention_catalog=inventions.catalog_public(),
+            known_inventions=list(self.world.inventions),
+            trade_fairness_bonus=inventions.trade_fairness_bonus(self.world),
+            can_vote=agent.can_vote(self.world.tick),
+            expelled=agent.expelled,
+            is_leader=bool(leader and leader.agent_id == agent.agent_id),
+            town_leader_id=leader.agent_id if leader else None,
+            town_leader_name=leader.persona.name if leader else None,
+            notorious=notorious,
+            lobby_targets=self._lobby_targets_for(agent, open_props, leader),
+            newcomers=newcomers,
         )
+
+    def _welcome_replacements(self) -> None:
+        """After an expulsion, seat a newcomer (franchise pending a welcome vote)."""
+        for pending in governance.take_pending_welcomes():
+            newcomer = town_factory.spawn_newcomer(
+                self.rng, self.agents, self.world, replacing=pending.get("replacing"),
+            )
+            if newcomer is None:
+                continue
+            self.agents[newcomer.agent_id] = newcomer
+            self._last_thought_tick[newcomer.agent_id] = -1
+
+    def _lobby_targets_for(self, agent: Agent, open_props: list, leader) -> list:
+        """Public roll of voters a political actor might still need to convince."""
+        sponsor = any(prop.get("proposed_by") == agent.agent_id for prop in open_props)
+        is_lead = bool(leader and leader.agent_id == agent.agent_id)
+        deadlock = any(prop.get("deadlock") for prop in open_props)
+        if not (sponsor or is_lead or (agent.official_track_record and (deadlock or self.world.active_crises))):
+            return []
+        targets = []
+        for prop in open_props:
+            if not (prop.get("deadlock") or self.world.active_crises
+                    or prop.get("proposed_by") == agent.agent_id):
+                continue
+            lean = "yes" if prop.get("proposed_by") == agent.agent_id else (
+                prop.get("votes", {}).get(agent.agent_id) or "yes"
+            )
+            for other in self.agents.values():
+                if other.agent_id == agent.agent_id or not other.can_vote(self.world.tick):
+                    continue
+                last = (prop.get("votes") or {}).get(other.agent_id)
+                if last == lean:
+                    continue
+                targets.append({
+                    "id": other.agent_id,
+                    "name": other.persona.name,
+                    "location": other.location,
+                    "last_vote": last,
+                    "proposal_id": prop["proposal_id"],
+                    "lean": lean,
+                })
+                if len(targets) >= 6:
+                    return targets
+        return targets

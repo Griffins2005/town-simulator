@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import json
 
+import analytics
+import governance
 from agent import Agent
 from engine import Engine
 from world import World
@@ -43,10 +45,11 @@ from world import World
 # in the recorder rather than in world.py. If town_factory.py's
 # LOCATIONS list ever changes, add a matching entry here.
 DEFAULT_LOCATION_LAYOUT = {
-    "farm": {"x": 150, "y": 150},
-    "market": {"x": 500, "y": 350},
-    "town_hall": {"x": 500, "y": 650},
-    "tavern": {"x": 850, "y": 250},
+    "farm": {"x": 160, "y": 130},
+    "workshop": {"x": 180, "y": 430},
+    "market": {"x": 500, "y": 300},
+    "town_hall": {"x": 500, "y": 640},
+    "tavern": {"x": 840, "y": 210},
 }
 
 
@@ -85,6 +88,7 @@ class Recorder:
             )
         self.frames: list[dict] = []
         self._last_event_log_len = 0
+        self._metrics_window: list[dict] = []
 
     def step(self) -> dict:
         """Advance the wrapped engine by one tick, capture a frame, and
@@ -150,6 +154,9 @@ class Recorder:
         about = event.get("about")
         if isinstance(about, str) and about.startswith("agent_"):
             involved.add(about)
+        target = event.get("target")
+        if isinstance(target, str) and target.startswith("agent_"):
+            involved.add(target)
         return {**event, "agents_involved": sorted(involved)}
 
     def _snapshot(self, new_events: list[dict], tick: int) -> dict:
@@ -161,24 +168,46 @@ class Recorder:
         agent: Agent
         for agent_id, agent in self.engine.agents.items():
             agents_frame[agent_id] = {
+                "name": agent.persona.name,
                 "location": agent.location,
                 "money": round(agent.money, 2),
-                "inventory": dict(agent.inventory),
+                "inventory": {k: round(v, 2) for k, v in agent.inventory.items()},
                 "reputation": round(agent.reputation, 3),
+                "expelled": agent.expelled,
+                "can_vote": agent.can_vote(world.tick),
+                "official": agent.official_track_record,
             }
+        metrics = analytics.compute_metrics(world, self.engine.agents, new_events)
+        anomaly_score, anomaly_flags = analytics.score_anomalies(
+            metrics, self._metrics_window, sorted(world.active_crises),
+        )
+        metrics["anomaly_score"] = anomaly_score
+        metrics["anomaly_flags"] = anomaly_flags
+        self._metrics_window.append({
+            "gossip_volume": metrics["gossip_volume"],
+            "gini": metrics["gini"],
+            "trade_completed": metrics["trade_completed"],
+        })
+        del self._metrics_window[:-30]
+        leader = governance.town_leader(self.engine.agents)
         return {
             "tick": tick,
             "agents": agents_frame,
             "active_rules": dict(world.active_rules),
+            "active_crises": sorted(world.active_crises),
+            "crisis_intensity": dict(world.crisis_intensity),
             "treasury": round(world.treasury, 2),
             "events": new_events,
-            # agent_id -> faction_id and faction_id -> display name.
-            # Included every frame (like active_rules) rather than only
-            # on the tick a faction forms, so a client connecting mid-run
-            # (or a browser tab that missed earlier frames) still sees
-            # current faction membership without replaying history.
             "factions": dict(world.factions),
             "faction_names": dict(world.faction_names),
+            "notice_board": list(world.notice_board),
+            "campaigns": list(world.active_campaigns),
+            "inventions": list(world.inventions),
+            "open_proposals": governance.open_proposals_snapshot(world, self.engine.agents),
+            "town_leader_id": leader.agent_id if leader else None,
+            "decision_records": list(self.engine.last_decision_records),
+            "metrics": metrics,
+            "relationship_edges": analytics.relationship_edges(self.engine.agents),
         }
 
     def agents_static_snapshot(self) -> dict:

@@ -15,12 +15,23 @@ from agent import Agent, Persona
 from decision import RuleBasedDecider
 from world import Location, World
 
-LOCATIONS = ["farm", "market", "town_hall", "tavern"]
+LOCATIONS = ["farm", "workshop", "market", "town_hall", "tavern"]
 
 FIRST_NAMES = [
-    "Marcus", "Lena", "Tomas", "Aria", "Boris", "Nia", "Edwin", "Sofia",
-    "Declan", "Maya", "Otto", "Priya", "Felix", "Yara", "Hugo", "Zara",
+    "Marcus Hale", "Lena Voss", "Tomas Reed", "Aria Cho", "Boris Klein",
+    "Nia Okonkwo", "Edwin Pall", "Sofia Alvarez", "Declan Byrne", "Maya Singh",
+    "Otto Berg", "Priya Shah", "Felix Marin", "Yara Haddad", "Hugo Costa",
+    "Zara Malik",
 ]
+
+# Used when the town expels someone and welcomes a replacement.
+NEWCOMER_NAMES = [
+    "Ivy Chen", "Rafi Okello", "Nora Lind", "Samir Qureshi",
+    "Elise Moreau", "Kenji Sato", "Pilar Vargas", "Jonah Drake",
+    "Amara Cole", "Theo Nilsen", "Laila Farouk", "Quinn Adler",
+]
+
+MAX_POPULATION = 22
 
 
 def build_world() -> World:
@@ -32,6 +43,7 @@ def build_world() -> World:
     """
     return World(locations=[
         Location("farm", resources={"food": 40.0}),
+        Location("workshop", resources={}),
         Location("market", resources={}),
         Location("town_hall", resources={}),
         Location("tavern", resources={}),
@@ -68,3 +80,55 @@ def build_agents(rng: random.Random, num_agents: int) -> dict:
         )
         agents[agent_id] = agent
     return agents
+
+
+def next_agent_id(agents: dict) -> str:
+    """Next unused agent_NN id, so newcomers don't collide with the seed town."""
+    nums = []
+    for agent_id in agents:
+        try:
+            nums.append(int(str(agent_id).split("_")[1]))
+        except (IndexError, ValueError):
+            continue
+    return f"agent_{max(nums, default=-1) + 1:02d}"
+
+
+def spawn_newcomer(rng: random.Random, agents: dict, world, replacing: str | None = None) -> Agent | None:
+    """Welcome a new resident after an expulsion. Returns None if the town is full."""
+    if len(agents) >= MAX_POPULATION:
+        return None
+    used_names = {a.persona.name for a in agents.values()}
+    pool = [n for n in NEWCOMER_NAMES if n not in used_names] or NEWCOMER_NAMES
+    agent_id = next_agent_id(agents)
+    persona = Persona(
+        name=rng.choice(pool),
+        industriousness=rng.random(),
+        generosity=rng.random(),
+        sociability=max(0.35, rng.random()),
+        rule_respect=rng.random(),
+        risk_tolerance=rng.random(),
+    )
+    agent = Agent(
+        agent_id=agent_id,
+        persona=persona,
+        location=rng.choice(["market", "tavern", "town_hall"]),
+        money=round(rng.uniform(4, 12), 2),
+        inventory={"food": round(rng.uniform(0.5, 2.0), 1)},
+        decider=RuleBasedDecider(rng=rng),
+        reputation=0.55,
+        voting_rights=False,
+    )
+    world.log_event(
+        "member_arrived",
+        agent=agent_id,
+        name=persona.name,
+        replacing=replacing,
+    )
+    world.notice_board.append({
+        "tick": world.tick,
+        "from": "town_hall",
+        "about": agent_id,
+        "text": f"{persona.name} arrived — awaiting a welcome vote",
+    })
+    del world.notice_board[:-8]
+    return agent

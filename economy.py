@@ -151,7 +151,11 @@ def regenerate_resources(world) -> None:
     for loc in world.locations.values():
         current = loc.resources.get(DEFAULT_RESOURCE_KIND, 0.0)
         if current < RESOURCE_CAP:
-            loc.resources[DEFAULT_RESOURCE_KIND] = min(RESOURCE_CAP, current + RESOURCE_REGEN_RATE)
+            import inventions
+            bonus = inventions.farm_regen_bonus(world) if loc.name == "farm" else 0.0
+            loc.resources[DEFAULT_RESOURCE_KIND] = min(
+                RESOURCE_CAP, current + RESOURCE_REGEN_RATE + bonus
+            )
 
 
 def work(actor: Agent, world: World):
@@ -182,6 +186,8 @@ def work(actor: Agent, world: World):
 
     loc.resources[DEFAULT_RESOURCE_KIND] = available - WORK_YIELD
     actor.inventory[DEFAULT_RESOURCE_KIND] = actor.inventory.get(DEFAULT_RESOURCE_KIND, 0.0) + WORK_YIELD
+    actor.memory.add(MemoryEntry(world.tick, "worked", None,
+                                 {"location": actor.location, "gained": WORK_YIELD}))
     world.log_event("work", agent=actor.agent_id, location=actor.location, gained=WORK_YIELD)
     return ActionResult(True, f"gathered {WORK_YIELD} {DEFAULT_RESOURCE_KIND}")
 

@@ -30,6 +30,7 @@ from town_factory import build_agents, build_world
 import chaos
 import economy
 import governance
+import inventions
 
 NUM_AGENTS = 16
 NUM_TICKS = 1000
@@ -135,7 +136,9 @@ def main() -> None:
     governance.reset()
     chaos.reset_buzz()
     chaos.reset_factions()
+    chaos.reset_campaigns()
     chaos.reset_corruption_cooldown()
+    inventions.reset()
 
     world = build_world()
     agents = build_agents(rng, NUM_AGENTS)

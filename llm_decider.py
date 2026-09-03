@@ -21,7 +21,7 @@ unverified-against-the-live-API until you've run it once yourself with a
 real GROQ_API_KEY and confirmed the schema round-trips as expected.
 
 Setup:
-    pip install groq
+    python3 -m pip install -r requirements.txt
     export GROQ_API_KEY=your_key_here
 
 The JSON schema and prompt cover the same action set as Phase 1's
@@ -38,6 +38,25 @@ import os
 
 from decision import Intent, Perception
 from rate_limiter import RECOMMENDED_RPM_SAFETY_MARGIN, TokenBucketRateLimiter
+
+
+def require_groq() -> None:
+    """Fail clearly when `groq` is missing from *this* interpreter.
+
+    `pip install groq` often lands in a different Python than `python3`
+    (Anaconda vs Xcode vs a project venv). The message prints
+    `sys.executable` so the next install command hits the same binary.
+    """
+    try:
+        import groq  # noqa: F401
+    except ModuleNotFoundError as exc:
+        import sys
+        raise ModuleNotFoundError(
+            "groq is not installed for this Python:\n"
+            f"  {sys.executable}\n"
+            "Install it into that interpreter (plain `pip` may target another):\n"
+            f"  {sys.executable} -m pip install -r requirements.txt"
+        ) from exc
 
 # Must match main_llm.py's BUILD_VERSION -- main_llm.py checks this at
 # startup and warns loudly if they differ, which catches the specific
@@ -74,7 +93,7 @@ MODEL = "openai/gpt-oss-120b"
 # the whole action-execution stack just to know action NAMES).
 _VALID_ACTIONS = [
     "move", "work", "trade_offer", "trade_accept", "trade_reject",
-    "speak", "gossip", "propose_rule", "vote", "idle",
+    "speak", "gossip", "propose_rule", "vote", "lobby", "invent", "adopt_invention", "idle",
 ]
 
 _INTENT_SCHEMA = {
@@ -107,14 +126,17 @@ _INTENT_SCHEMA = {
         "want_item": {"type": ["string", "null"], "description": "item name wanted in return, e.g. money"},
         "want_amount": {"type": ["number", "null"], "description": "quantity of want_item for trade_offer"},
         "about": {"type": ["string", "null"], "description": "agent_id for gossip"},
-        "rule_type": {"type": ["string", "null"], "enum": ["curfew", "wealth_tax", "repeal", None], "description": "for propose_rule"},
+        "rule_type": {"type": ["string", "null"], "enum": ["curfew", "wealth_tax", "repeal", "expel", "suspend_vote", "welcome", None], "description": "for propose_rule"},
         "rule_after_tick_of_day": {"type": ["integer", "null"], "description": "for propose_rule curfew"},
         "rule_period": {"type": ["integer", "null"], "description": "for propose_rule curfew or wealth_tax"},
         "rule_tax_rate": {"type": ["number", "null"], "description": "for propose_rule wealth_tax, 0-1"},
         "rule_tax_threshold": {"type": ["number", "null"], "description": "for propose_rule wealth_tax"},
         "rule_target_proposal_id": {"type": ["integer", "null"], "description": "for propose_rule repeal: proposal_id of the enacted rule to remove"},
-        "proposal_id": {"type": ["integer", "null"], "description": "for vote"},
-        "vote_choice": {"type": ["string", "null"], "enum": ["yes", "no", None], "description": "for vote"},
+        "rule_target_agent_id": {"type": ["string", "null"], "description": "for propose_rule expel/suspend_vote/welcome"},
+        "proposal_id": {"type": ["integer", "null"], "description": "for vote or lobby"},
+        "vote_choice": {"type": ["string", "null"], "enum": ["yes", "no", None], "description": "for vote, or lobby lean"},
+        "invention_kind": {"type": ["string", "null"], "description": "catalog kind for invent, e.g. water_pump"},
+        "invention_id": {"type": ["integer", "null"], "description": "for adopt_invention"},
         "say": {"type": ["string", "null"]},
         "reasoning": {
             "type": "string",
@@ -125,7 +147,7 @@ _INTENT_SCHEMA = {
         "action", "destination", "to", "offer_id", "give_item", "give_amount",
         "want_item", "want_amount", "about", "rule_type", "rule_after_tick_of_day",
         "rule_period", "rule_tax_rate", "rule_tax_threshold", "rule_target_proposal_id",
-        "proposal_id", "vote_choice", "say", "reasoning",
+        "rule_target_agent_id", "proposal_id", "vote_choice", "invention_kind", "invention_id", "say", "reasoning",
     ],
     "additionalProperties": False,
 }
@@ -143,15 +165,23 @@ Valid actions and which fields each one uses (all others should be null):
 - trade_offer: to, give_item, give_amount, want_item, want_amount
 - trade_accept / trade_reject: offer_id
 - speak: to, optionally say
-- gossip: about, optionally to, optionally say
-- propose_rule: rule_type ("curfew", "wealth_tax", or "repeal"), and for curfew:
-  rule_after_tick_of_day + rule_period; for wealth_tax:
-  rule_tax_rate + rule_tax_threshold + rule_period; for repeal:
-  rule_target_proposal_id (must match one of enacted_proposals in Perception)
-- vote: proposal_id, vote_choice ("yes" or "no")
+- gossip: about, optionally to, optionally say (make it specific: scandal, expulsion, welcome)
+- propose_rule: rule_type ("curfew", "wealth_tax", "repeal", "expel", "suspend_vote", or "welcome").
+  curfew: rule_after_tick_of_day + rule_period; wealth_tax: rule_tax_rate +
+  rule_tax_threshold + rule_period; repeal: rule_target_proposal_id;
+  expel/suspend_vote/welcome: rule_target_agent_id
+- vote: proposal_id, vote_choice ("yes" or "no") — only if you have voting rights
+- lobby: to (one agent here), proposal_id, vote_choice as the lean you want from them.
+  Use this on deadlock, as town leader, or in a crisis. Convince people one by one.
+- invent: invention_kind (must be a catalog kind from Perception, e.g. water_pump)
+- adopt_invention: invention_id
 - idle: (no fields needed)
 
 Stay in character based on your traits and recent memories. Be concise. \
+Do NOT choose idle unless every other action is impossible. Idle is a last resort. \
+If the town is in a crisis (famine, unrest, bank_run), you MUST act: move to the \
+farm and work, go to town_hall and propose or vote, invent a catalog tool, speak \
+or gossip to organize neighbors. Fight for the town the way a frightened person would. \
 Respond with ONLY the JSON object, no other text."""
 
 
@@ -175,9 +205,28 @@ def _build_user_prompt(perception):
         f"Currently active town rules: {p.active_rules}.",
     ]
     if p.active_crises:
-        lines.append(f"Active town crises: {sorted(p.active_crises)}.")
+        levels = getattr(p, "crisis_intensity", {}) or {}
+        bits = [f"{c} (intensity {levels.get(c, 0.5):.2f})" for c in sorted(p.active_crises)]
+        lines.append("CRISIS — the town is in danger: " + ", ".join(bits) + ".")
+        lines.append("You must act this tick. Do not idle. Work, move to help, vote, invent, or organize.")
     if p.self_faction:
-        lines.append(f"Your faction: {p.self_faction} (recent yes-rate: {p.faction_lean:.2f}).")
+        faction_label = p.self_faction_name or p.self_faction
+        lines.append(f"Your faction: {faction_label} (recent yes-rate: {p.faction_lean:.2f}).")
+    if p.public_headlines:
+        lines.append("Recent town headlines:")
+        lines.extend(f"  - {h.get('text')}" for h in p.public_headlines)
+    if getattr(p, "observed_problems", None):
+        lines.append(f"Problems you could invent toward: {p.observed_problems}.")
+    if getattr(p, "invention_catalog", None):
+        lines.append("Invention catalog (only these kinds are valid): "
+                     + ", ".join(f"{i['kind']} ({i['name']})" for i in p.invention_catalog) + ".")
+    if getattr(p, "known_inventions", None):
+        lines.append("Existing inventions: "
+                     + ", ".join(f"#{i['id']} {i['name']}" for i in p.known_inventions) + ".")
+    if p.notice_board:
+        lines.append("Tavern notice board: " + ", ".join(
+            slip.get("text", "") for slip in p.notice_board if slip.get("text")
+        ) + ".")
     if p.speculation_buzz:
         lines.append(f"Trade rumors you have heard: {p.speculation_buzz}.")
     if p.enacted_proposals:
@@ -190,7 +239,19 @@ def _build_user_prompt(perception):
     if p.pending_trade_offers:
         lines.append(f"Trade offers waiting for your response: {p.pending_trade_offers}.")
     if p.open_proposals:
-        lines.append(f"Open governance proposals you can vote on: {p.open_proposals}.")
+        lines.append(f"Open governance proposals (quorum/pass/deadlock annotated): {p.open_proposals}.")
+    if getattr(p, "can_vote", True) is False:
+        lines.append("Your voting rights are suspended or you are expelled. You cannot vote or propose.")
+    if getattr(p, "is_leader", False):
+        lines.append(f"You are the town leader ({p.town_leader_name}). If a vote is deadlocked or the town is in crisis, lobby members one by one.")
+    elif getattr(p, "town_leader_name", None):
+        lines.append(f"Town leader: {p.town_leader_name}.")
+    if getattr(p, "notorious", None):
+        lines.append(f"Notorious residents (expel or suspend_vote): {p.notorious}.")
+    if getattr(p, "newcomers", None):
+        lines.append(f"New faces waiting to be welcomed onto the roll: {p.newcomers}.")
+    if getattr(p, "lobby_targets", None):
+        lines.append(f"People you could still lobby: {p.lobby_targets}.")
     lines.append("\nChoose your action for this tick. Respond with ONLY the JSON object.")
     return "\n".join(lines)
 
@@ -267,10 +328,9 @@ class LLMDecider:
                 "GROQ_API_KEY environment variable. Get a free key at "
                 "https://console.groq.com/keys"
             )
-        # Imported here, not at module level, so the rest of this
-        # codebase (and anything that imports decision.py, which every
-        # module does) doesn't require the `groq` package installed
-        # just to run Phase 1's RuleBasedDecider path.
+        # Imported here, not at module level, so rule-based entry
+        # points do not require the groq package.
+        require_groq()
         from groq import Groq
         self.client = Groq(api_key=api_key)
         self.verbose = verbose
@@ -294,6 +354,36 @@ class LLMDecider:
         # and failing json_schema first (see use_strict_schema's
         # docstring above for why this is the new default).
         self._use_json_object_fallback = not use_strict_schema
+        self._rules = None
+
+    def _rule_fallback(self, agent_id, perception, why: str):
+        """When the model idles or fails, still act like a resident."""
+        from decision import RuleBasedDecider
+        if self._rules is None:
+            self._rules = RuleBasedDecider()
+        if self.verbose:
+            print(f"  [llm fallback] {agent_id}: {why} — rule-based action instead")
+        return self._rules.decide(agent_id, perception)
+
+    def _after_llm(self, agent_id, perception, intent):
+        if intent.action != "idle":
+            return intent
+        return self._rule_fallback(agent_id, perception, "model returned idle")
+
+    def deliberate(self, agent_id, perception):
+        """Same as decide(), plus a forensic draft for the six-stage record."""
+        from decision import DecisionDraft
+        intent = self.decide(agent_id, perception)
+        considered = [{
+            "action": intent.action,
+            "reason": intent.say or "llm choice",
+            "weight": 1.0,
+        }]
+        return DecisionDraft(
+            intent=intent,
+            retrieved_memories=list(perception.recent_memories),
+            considered_actions=considered,
+        )
 
     def decide(self, agent_id, perception):
         """Implements the Decider protocol (see decision.Decider).
@@ -347,7 +437,7 @@ class LLMDecider:
                 max_completion_tokens=500,
             )
             raw = response.choices[0].message.content
-            return self._parse_intent(agent_id, raw)
+            return self._after_llm(agent_id, perception, self._parse_intent(agent_id, raw))
         except Exception as exc:
             if not self._use_json_object_fallback and self._is_unsupported_json_schema_error(exc):
                 # This is the exact failure mode a real run against
@@ -409,21 +499,19 @@ class LLMDecider:
                         max_completion_tokens=500,
                     )
                     raw = retry_response.choices[0].message.content
-                    return self._parse_intent(agent_id, raw)
+                    return self._after_llm(agent_id, perception, self._parse_intent(agent_id, raw))
                 except Exception as retry_exc:
                     if self.verbose:
                         print(f"  [llm error] {agent_id}: retry also failed "
-                              f"({retry_exc!r}) -- falling back to idle")
-                    return Intent(action="idle", args={}, say=None)
+                              f"({retry_exc!r}) — using rule-based action")
+                    return self._rule_fallback(agent_id, perception, "retry failed")
 
-            # Fail safe, exactly like actions.py does for illegal
-            # Intents: a network error, a 429 that slipped through, a
-            # malformed response -- none of it should crash the
-            # simulation. The agent just idles this tick and we log why,
-            # the same philosophy as actions.py's ActionResult(False, ...).
+            # Fail safe: never crash the town. If the model cannot
+            # answer, a rule-based survival choice still runs so a
+            # crisis is not met with a row of idle agents.
             if self.verbose:
-                print(f"  [llm error] {agent_id}: {exc!r} -- falling back to idle")
-            return Intent(action="idle", args={}, say=None)
+                print(f"  [llm error] {agent_id}: {exc!r} — using rule-based action")
+            return self._rule_fallback(agent_id, perception, "api error")
 
     @staticmethod
     def _json_schema_format() -> dict:
@@ -569,8 +657,22 @@ class LLMDecider:
                 rule_args = {
                     "target_proposal_id": data.get("rule_target_proposal_id"),
                 }
+            elif rule_type in ("expel", "suspend_vote", "welcome"):
+                rule_args = {
+                    "target_agent": data.get("rule_target_agent_id"),
+                }
             return {"rule_type": rule_type, "rule_args": rule_args}
         if action == "vote":
             return {"proposal_id": data.get("proposal_id"), "choice": data.get("vote_choice")}
+        if action == "lobby":
+            return {
+                "to": data.get("to"),
+                "proposal_id": data.get("proposal_id"),
+                "lean": data.get("vote_choice"),
+            }
+        if action == "invent":
+            return {"invention_kind": data.get("invention_kind")}
+        if action == "adopt_invention":
+            return {"invention_id": data.get("invention_id")}
         # work, idle, or anything unrecognized: no args needed.
         return {}

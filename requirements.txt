@@ -1,10 +1,18 @@
-# townsim dependencies
+# Eidolon Society Lab — Python dependencies
 #
-# Phase 1 (main.py, stress_test.py): ZERO external dependencies.
-# Everything runs on the Python 3.10+ standard library alone.
+# Core simulation and the live Society Lab UI need no pip packages:
+#   python3 main.py
+#   python3 stress_test.py
+#   python3 record_demo.py
+#   python3 live_server.py
+# Those entry points use the Python 3.9+ standard library only.
 #
-# Phase 2 (main_llm.py) requires the Groq SDK:
-groq>=1.5.0
+# The analytics page loads Chart.js 4.4.1 from cdnjs in the browser.
+# That is not a Python dependency.
+#
+# LLM-backed agents (main_llm.py, or live_server.py --llm) need Groq.
+# Install into the same interpreter you will run:
+#   python3 -m pip install -r requirements.txt
+# Bare `pip` can target Anaconda while `python3` is a different binary.
 
-# Python 3.10+ required (uses `X | Y` union type syntax and
-# `from __future__ import annotations` throughout).
+groq>=1.5.0

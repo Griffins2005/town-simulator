@@ -23,7 +23,7 @@ action, the way a human bouncing off a locked door doesn't crash reality.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agent import Agent
 from decision import Intent
@@ -32,6 +32,7 @@ from world import World
 
 import economy
 import governance
+import inventions
 
 
 @dataclass
@@ -39,9 +40,10 @@ class ActionResult:
     """Outcome of attempting to execute one Intent."""
 
     success: bool
-    reason: str  # human-readable explanation, useful for logs/debugging
-    # and, eventually, as a perception input ("your last action failed
-    # because...") so an LLM-driven agent can adapt next tick.
+    reason: str
+    legal: bool = True
+    state_changes: list = field(default_factory=list)
+    consequences: list = field(default_factory=list)
 
 
 def execute(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
@@ -81,11 +83,20 @@ def _move(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) 
         # compound here since each one calls this same line.
         RULE_VIOLATION_REPUTATION_DELTA = 0.02
         actor.reputation = max(0.0, actor.reputation - RULE_VIOLATION_REPUTATION_DELTA)
-        return ActionResult(False, "movement blocked by active rule (e.g. curfew)")
+        return ActionResult(
+            False, "movement blocked by active rule (e.g. curfew)",
+            legal=False,
+            consequences=["rule enforced", "reputation -0.02"],
+        )
 
+    previous = actor.location
     actor.location = destination
     world.log_event("move", agent=actor.agent_id, to=destination)
-    return ActionResult(True, "moved")
+    return ActionResult(
+        True, "moved",
+        state_changes=[{"field": "location", "from": previous, "to": destination}],
+        consequences=[f"now at {destination}"],
+    )
 
 
 def _work(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
@@ -153,7 +164,11 @@ def _speak(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent])
     # This is the ONLY line that changes to make agent dialogue visible
     # town-wide instead of only reconstructable from individual memories.
     world.log_event("speak", agent=actor.agent_id, to=target.agent_id, said=intent.say or "")
-    return ActionResult(True, "spoke")
+    return ActionResult(
+        True, "spoke",
+        state_changes=[{"field": "relationship", "with": target.agent_id, "delta": SPEAK_RELATIONSHIP_DELTA}],
+        consequences=["relationship +0.02 both ways"],
+    )
 
 
 def _gossip(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
@@ -180,21 +195,45 @@ def _gossip(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]
     else:
         listeners = [listeners] if isinstance(listeners, str) else listeners
 
-    GOSSIP_REPUTATION_NUDGE = 0.03
-    direction = -1 if "negative" in (intent.say or "").lower() else 0
+    text = (intent.say or "").lower()
+    tone = intent.args.get("tone")
+    if not tone:
+        if any(w in text for w in ("expel", "cast out", "banish", "throw out", "out of this town")):
+            tone = "expel"
+        elif any(w in text for w in ("scandal", "embezzl", "thief", "corrupt", "shame", "caught")):
+            tone = "scandal"
+        elif any(w in text for w in ("never trust", "liar", "negative", "crook", "rotten")):
+            tone = "accuse"
+        elif any(w in text for w in ("welcome", "new face", "join us", "glad you're here")):
+            tone = "welcome"
+        elif any(w in text for w in ("hero", "saved", "praise", "good soul", "stands up")):
+            tone = "praise"
+        else:
+            tone = "chat"
+
+    hit = {"expel": -0.05, "scandal": -0.035, "accuse": -0.025, "praise": 0.02, "welcome": 0.015}.get(tone, 0.0)
+    before = about.reputation
+    if hit:
+        about.reputation = max(0.0, min(1.0, about.reputation + hit))
     for listener_id in listeners:
         listener = agents.get(listener_id)
         if listener is None or listener_id == about_id:
             continue
         listener.memory.add(MemoryEntry(world.tick, "heard_gossip", about_id,
-                                         {"from": actor.agent_id, "said": intent.say or ""}))
-        if direction:
-            listener.adjust_relationship(about_id, direction * GOSSIP_REPUTATION_NUDGE)
+                                         {"from": actor.agent_id, "said": intent.say or "", "tone": tone}))
+        if hit:
+            listener.adjust_relationship(about_id, hit)
 
-    # See _speak's comment above -- same reasoning applies here.
+    if tone == "expel":
+        world.log_event("call_for_expulsion", agent=actor.agent_id, about=about_id,
+                        said=intent.say or "")
+    if before >= 0.20 and about.reputation < 0.20 and tone in ("expel", "scandal", "accuse"):
+        world.log_event("notoriety", agent=about_id, name=about.persona.name,
+                        reputation=round(about.reputation, 3))
+
     world.log_event("gossip", agent=actor.agent_id, about=about_id, heard_by=listeners,
-                     said=intent.say or "")
-    return ActionResult(True, "gossiped")
+                     said=intent.say or "", tone=tone)
+    return ActionResult(True, "gossiped", consequences=[f"tone={tone}"])
 
 
 def _propose_rule(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
@@ -202,7 +241,28 @@ def _propose_rule(actor: Agent, intent: Intent, world: World, agents: dict[str, 
     `governance.propose`, which opens a new proposal for the rule_type
     and rule_args given in `intent.args`.
     """
+    rule_type = intent.args.get("rule_type")
+    rule_args = intent.args.get("rule_args") or {}
+    target_id = rule_args.get("target_agent") or rule_args.get("target_agent_id")
+    if rule_type in ("expel", "suspend_vote", "welcome") and target_id:
+        target = agents.get(target_id)
+        if target is None:
+            return ActionResult(False, f"no such agent '{target_id}'")
+        if rule_type == "expel" and target.expelled:
+            return ActionResult(False, "already expelled")
+        if rule_type == "welcome" and target.can_vote(world.tick) and not target.expelled:
+            return ActionResult(False, "they already have a seat")
+        if rule_type == "expel":
+            remaining = sum(1 for a in agents.values()
+                            if a.can_vote(world.tick) and a.agent_id != target_id)
+            if remaining < governance.MIN_ELIGIBLE_AFTER_EXPEL:
+                return ActionResult(False, "town too small to expel anyone")
     return governance.propose(actor, intent.args, world)
+
+
+def _lobby(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
+    """One-on-one political pressure. Engine validates; Decider only names the target."""
+    return governance.apply_lobby(actor, intent.args, world, agents)
 
 
 def _vote(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
@@ -212,6 +272,24 @@ def _vote(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) 
     `intent.args["choice"]` ("yes" or "no").
     """
     return governance.cast_vote(actor, intent.args.get("proposal_id"), intent.args.get("choice"), world)
+
+
+def _invent(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
+    """Agent proposes a catalog invention; inventions.py validates."""
+    kind = intent.args.get("invention_kind") or intent.args.get("kind")
+    ok, reason, changes, consequences = inventions.try_invent(actor, kind, world)
+    return ActionResult(ok, reason, legal=ok or "unknown" not in reason,
+                        state_changes=changes, consequences=consequences)
+
+
+def _adopt_invention(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
+    invention_id = intent.args.get("invention_id")
+    try:
+        invention_id = int(invention_id)
+    except (TypeError, ValueError):
+        return ActionResult(False, "invention_id must be an integer", legal=False)
+    ok, reason, changes, consequences = inventions.try_adopt(actor, invention_id, world)
+    return ActionResult(ok, reason, state_changes=changes, consequences=consequences)
 
 
 def _idle(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
@@ -239,5 +317,8 @@ _REGISTRY = {
     "gossip": _gossip,
     "propose_rule": _propose_rule,
     "vote": _vote,
+    "lobby": _lobby,
+    "invent": _invent,
+    "adopt_invention": _adopt_invention,
     "idle": _idle,
 }

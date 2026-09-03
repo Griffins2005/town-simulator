@@ -2,7 +2,7 @@
 main_llm.py -- Phase 2 entry point: run the town with LLM-backed agents.
 
 Usage:
-    pip install groq
+    python3 -m pip install -r requirements.txt
     export GROQ_API_KEY=your_key_here
     python3 main_llm.py
 
@@ -35,6 +35,7 @@ from town_factory import build_agents, build_world
 import chaos
 import economy
 import governance
+import inventions
 
 # Bumped every time llm_decider.py's request/fallback logic changes
 # meaningfully. Printed at startup (see main(), below) specifically so
@@ -100,9 +101,10 @@ def main() -> None:
     print(" here, you're running a stale copy -- re-extract the zip fresh.)\n")
 
     try:
-        from llm_decider import LLMDecider
-    except ImportError:
-        print("The 'groq' package isn't installed. Run: pip install groq")
+        from llm_decider import LLMDecider, require_groq
+        require_groq()
+    except ModuleNotFoundError as exc:
+        print(exc)
         return
 
     if LLMDecider.BUILD_VERSION != BUILD_VERSION:
@@ -133,7 +135,9 @@ def main() -> None:
     governance.reset()
     chaos.reset_buzz()
     chaos.reset_factions()
+    chaos.reset_campaigns()
     chaos.reset_corruption_cooldown()
+    inventions.reset()
 
     world = build_world()
     agents = build_agents(rng, NUM_AGENTS)

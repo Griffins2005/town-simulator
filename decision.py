@@ -89,6 +89,7 @@ class Perception:
     # reacts to -- see decision.py's CHAOS_INTEGRATION note on
     # RuleBasedDecider for where these get read.
     active_crises: set[str] = field(default_factory=set)
+    crisis_intensity: dict[str, float] = field(default_factory=dict)
     self_faction: str | None = None
     speculation_buzz: dict[str, float] = field(default_factory=dict)
     # The agent's faction's recent yes-rate across its members' last
@@ -105,6 +106,28 @@ class Perception:
     # _enacted_keys_by_proposal index (which tracks raw active_rules
     # KEYS, an implementation detail Perception has no business leaking).
     enacted_proposals: list[dict] = field(default_factory=list)
+    # Display name for self_faction (e.g. "Amber Guild"), separate from
+    # the stable faction_id. None if the agent has no faction yet.
+    self_faction_name: str | None = None
+    # Nearby agent_id -> persona name, so dialogue can use names.
+    nearby_names: dict[str, str] = field(default_factory=dict)
+    # Recent public events an agent can gossip about, each
+    # {"about": agent_id|None, "text": str}.
+    public_headlines: list[dict] = field(default_factory=list)
+    # Latest tavern notice-board slips (shared public channel).
+    notice_board: list[dict] = field(default_factory=list)
+    observed_problems: list[str] = field(default_factory=list)
+    invention_catalog: list[dict] = field(default_factory=list)
+    known_inventions: list[dict] = field(default_factory=list)
+    trade_fairness_bonus: float = 0.0
+    can_vote: bool = True
+    expelled: bool = False
+    is_leader: bool = False
+    town_leader_id: str | None = None
+    town_leader_name: str | None = None
+    notorious: list = field(default_factory=list)
+    lobby_targets: list = field(default_factory=list)
+    newcomers: list = field(default_factory=list)
 
 
 @dataclass
@@ -131,6 +154,15 @@ class Intent:
     action: str
     args: dict = field(default_factory=dict)
     say: str | None = None
+
+
+@dataclass
+class DecisionDraft:
+    """Decider output before validation: the intent plus what was weighed."""
+
+    intent: Intent
+    retrieved_memories: list = field(default_factory=list)
+    considered_actions: list = field(default_factory=list)
 
 
 class Decider(Protocol):
@@ -173,15 +205,18 @@ class RuleBasedDecider:
         self.rng = rng or random.Random()
 
     def decide(self, agent_id: str, perception: Perception) -> Intent:
-        """Choose this agent's action for the current tick via a fixed
-        priority chain: respond to pending trade offers, then vote on
-        unvoted proposals, then maybe propose a rule, then a flat
-        "wanderlust" chance to circulate, then maybe socialize, then
-        maybe initiate a trade, then maybe work, and finally circulate
-        if nothing else applied. See the inline "Priority N" comments
-        below for the rationale behind each step's ordering and gating.
-        """
+        return self.deliberate(agent_id, perception).intent
+
+    def deliberate(self, agent_id: str, perception: Perception) -> DecisionDraft:
+        """Priority chain plus a forensic draft of what was weighed."""
         p = perception
+        considered: list[dict] = []
+        memories = list(p.recent_memories)
+
+        def take(intent: Intent, reason: str, weight: float) -> DecisionDraft:
+            considered.append({"action": intent.action, "reason": reason, "weight": round(weight, 2)})
+            return DecisionDraft(intent=intent, retrieved_memories=memories,
+                                 considered_actions=list(considered))
 
         # Priority 1: respond to a pending trade offer if one exists.
         # Rationale: unresolved offers shouldn't sit forever; an agent
@@ -189,19 +224,38 @@ class RuleBasedDecider:
         # mirrors a real heuristic humans use (resolve direct asks first).
         if p.pending_trade_offers:
             offer = p.pending_trade_offers[0]
-            return self._respond_to_trade(agent_id, p, offer)
+            return take(self._respond_to_trade(agent_id, p, offer),
+                        "resolve a pending trade offer first", 0.92)
+
+        # Outcasts slink to the tavern and sour the room -- they cannot
+        # vote, but gossip is how notoriety and welcome talk stay alive.
+        if p.expelled:
+            if p.self_location != "tavern" and self.rng.random() < 0.7:
+                return take(Intent(action="move", args={"destination": "tavern"}),
+                            "expelled — the tavern is all that's left", 0.84)
+            if p.location_agents:
+                other = self.rng.choice(p.location_agents)
+                return take(Intent(
+                    action="gossip",
+                    args={"about": other, "tone": "accuse"},
+                    say=f"this town threw me out and still wants {p.nearby_names.get(other, other)} to smile about it",
+                ), "expelled — bitter gossip", 0.7)
 
         # Priority 2: vote on an open proposal this agent hasn't voted on
-        # yet. Rationale: governance only has teeth if agents actually
-        # participate; a rule-based agent votes based on rule_respect and
-        # self-interest rather than abstaining, so governance.py's voting
-        # logic gets real exercise. Filtered to UNVOTED proposals -- voting
-        # again on something already decided is wasted effort and (once
-        # this is LLM-backed) a wasted call; see engine.py's
-        # `_should_think` for the matching interrupt-side fix.
+        # yet. Franchise-only -- a suspended or expelled resident is not
+        # a hidden extra ballot. Filtered to UNVOTED proposals.
         unvoted = [prop for prop in p.open_proposals if agent_id not in prop.get("votes", {})]
-        if unvoted:
-            return self._vote(agent_id, p, unvoted[0])
+        if p.can_vote and unvoted:
+            return take(self._vote(agent_id, p, unvoted[0]),
+                        "an open proposal still needs this vote", 0.88)
+
+        lobby_draft = self._maybe_lobby(agent_id, p, take)
+        if lobby_draft is not None:
+            return lobby_draft
+
+        sanction_draft = self._maybe_sanction(agent_id, p, take)
+        if sanction_draft is not None:
+            return sanction_draft
 
         # Priority 3: occasionally propose a rule -- either a NEW one
         # (curfew/wealth_tax) or, if something is already enacted, a
@@ -223,24 +277,28 @@ class RuleBasedDecider:
                 and self.rng.random() < p.self_rule_respect * 0.15):
             propose_tax = p.self_money < 10.0
             if propose_tax:
-                return Intent(action="propose_rule", args={
+                return take(Intent(action="propose_rule", args={
                     "rule_type": "wealth_tax",
                     "rule_args": {"rate": 0.15, "threshold": 15.0, "period": 20},
-                })
-            return Intent(action="propose_rule", args={
+                }), "propose a wealth tax from the hall", 0.7)
+            return take(Intent(action="propose_rule", args={
                 "rule_type": "curfew",
                 "rule_args": {"after_tick_of_day": 18, "period": 24},
-            })
+            }), "propose a curfew from the hall", 0.68)
 
         if (p.self_location == "town_hall"
                 and not p.open_proposals
                 and p.enacted_proposals
                 and self.rng.random() < (1.0 - p.self_rule_respect) * 0.12):
             target = self.rng.choice(p.enacted_proposals)
-            return Intent(action="propose_rule", args={
+            return take(Intent(action="propose_rule", args={
                 "rule_type": "repeal",
                 "rule_args": {"target_proposal_id": target["proposal_id"]},
-            })
+            }), "propose repeal of an enacted rule", 0.64)
+
+        crisis_draft = self._survive_crisis(agent_id, p, take)
+        if crisis_draft is not None:
+            return crisis_draft
 
         # Priority 3.5: wanderlust. Independent of everything below, an
         # agent has a flat per-tick chance to just move on regardless of
@@ -264,13 +322,15 @@ class RuleBasedDecider:
         # reasoning about competing needs, not a coin flip at all.
         WANDERLUST_CHANCE = 0.12
         if self.rng.random() < WANDERLUST_CHANCE:
-            return Intent(action="move", args={"destination": self._next_stop(p.self_location)})
+            dest = self._next_stop(p.self_location)
+            return take(Intent(action="move", args={"destination": dest}),
+                        "wander to keep circulating", 0.55)
 
         # Priority 4: if other agents are present, maybe socialize
         # (gossip or speak) based on sociability trait -- now read from
         # real Perception data, not a hardcoded constant.
         if p.location_agents and self.rng.random() < p.self_sociability:
-            return self._socialize(agent_id, p)
+            return take(self._socialize(agent_id, p), "talk while others are here", 0.6)
 
         # Priority 5: initiate a trade if standing at the market with a
         # surplus to offer. "Surplus" is defined relative to a fixed
@@ -284,12 +344,32 @@ class RuleBasedDecider:
         food_held = p.self_inventory.get("food", 0.0)
         if (p.self_location == "market" and p.location_agents
                 and food_held > FOOD_COMFORT_THRESHOLD):
-            return self._initiate_trade(agent_id, p, food_held)
+            return take(self._initiate_trade(agent_id, p, food_held),
+                        "offer surplus food at market", 0.58)
 
         # Priority 6: economic behavior -- work if resources are available
         # here and the agent leans industrious.
         if p.location_resources and self.rng.random() < p.self_industriousness:
-            return Intent(action="work", args={})
+            return take(Intent(action="work", args={}), "work available resources", 0.5)
+
+        # Priority 6.5: propose or adopt an invention. The agent only
+        # NAMES a catalog kind; inventions.py decides whether knowledge,
+        # materials, and location make construction legal.
+        match = next((item for item in p.invention_catalog
+                      if item.get("problem") in p.observed_problems), None)
+        if (match and p.self_location in ("workshop", "farm", "market", "town_hall")
+                and p.self_industriousness >= 0.4
+                and p.self_inventory.get("food", 0) >= 1.0
+                and p.self_money >= 2.0
+                and self.rng.random() < p.self_industriousness * 0.45):
+            considered.append({"action": "invent", "reason": f"address {match['problem']}", "weight": 0.52})
+            return take(Intent(action="invent", args={"invention_kind": match["kind"]}),
+                        f"propose {match['name']} to address {match['problem']}", 0.52)
+        adoptable = [inv for inv in p.known_inventions if agent_id not in inv.get("adopters", [])]
+        if adoptable and self.rng.random() < 0.18:
+            inv = adoptable[0]
+            return take(Intent(action="adopt_invention", args={"invention_id": inv["id"]}),
+                        f"adopt {inv.get('name')}", 0.42)
 
         # Priority 7: circulate. Rather than a one-way trip to "market"
         # that never returns (the original version's bug -- the whole
@@ -300,7 +380,9 @@ class RuleBasedDecider:
         # population spatially distributed, which both governance
         # (location-gated proposing) and economy (market needs people
         # WITHOUT surplus arriving too, to be worth trading with) depend on.
-        return Intent(action="move", args={"destination": self._next_stop(p.self_location)})
+        dest = self._next_stop(p.self_location)
+        return take(Intent(action="move", args={"destination": dest}),
+                    "nothing else applied — circulate", 0.2)
 
     # -- helpers -----------------------------------------------------
     # These read trait-ish info off the perception object's relationships/
@@ -308,7 +390,7 @@ class RuleBasedDecider:
     # must only ever see what's in `Perception`, never the live Agent/World,
     # to keep the seam honest for Phase 2.
 
-    _CIRCUIT = ["farm", "market", "tavern", "town_hall"]
+    _CIRCUIT = ["farm", "workshop", "market", "tavern", "town_hall"]
 
     def _next_stop(self, current: str) -> str:
         """Fixed circulation order. A real agent's reason to be somewhere
@@ -322,6 +404,75 @@ class RuleBasedDecider:
             return self._CIRCUIT[0]
         idx = self._CIRCUIT.index(current)
         return self._CIRCUIT[(idx + 1) % len(self._CIRCUIT)]
+
+    def _survive_crisis(self, agent_id: str, p: Perception, take):
+        """When the town is in a crisis, residents fight it — they do not idle.
+
+        Famine: go work the farm, invent a pump, or beg/gossip for food.
+        Unrest: go to the hall, tax the rich, or rally neighbors.
+        Bank run: hoard, refuse strangers, talk people down at the tavern.
+        Intensity scales how urgently they abandon the usual day.
+        """
+        if not p.active_crises:
+            return None
+        intensity = p.crisis_intensity or {}
+        mag = max((intensity.get(tag, 0.5) for tag in p.active_crises), default=0.5)
+        if self.rng.random() > min(0.92, 0.45 + mag * 0.55):
+            return None
+        if "famine" in p.active_crises or (
+            "farm" in (p.location_resources or {}) and (p.location_resources or {}).get("food", 1) < 2
+        ):
+            food = p.self_inventory.get("food", 0.0)
+            if p.self_location != "farm" and food < 2.5:
+                return take(Intent(action="move", args={"destination": "farm"}),
+                            "famine — run to the farm", 0.94)
+            if p.self_location == "farm" and p.location_resources:
+                return take(Intent(action="work", args={}),
+                            "famine — harvest what is left", 0.93)
+            pump = next((item for item in p.invention_catalog
+                         if item.get("kind") == "water_pump"), None)
+            if pump and p.self_location in ("workshop", "farm") and p.self_money >= 2:
+                return take(Intent(action="invent", args={"invention_kind": "water_pump"}),
+                            "famine — build a water pump", 0.9)
+            if p.location_agents:
+                other = self.rng.choice(p.location_agents)
+                return take(Intent(action="gossip", args={
+                    "about": other, "to": other,
+                    "say": "the stores are failing — we have to work the farm",
+                }), "famine — warn a neighbor", 0.82)
+
+        if "unrest" in p.active_crises:
+            if p.self_location != "town_hall" and self.rng.random() < 0.7:
+                return take(Intent(action="move", args={"destination": "town_hall"}),
+                            "unrest — go demand a vote", 0.9)
+            if p.self_location == "town_hall" and not p.open_proposals:
+                return take(Intent(action="propose_rule", args={
+                    "rule_type": "wealth_tax",
+                    "rule_args": {"rate": 0.2, "threshold": 12.0, "period": 15},
+                }), "unrest — tax the rich before the town splits", 0.88)
+            if p.location_agents and (p.is_leader or p.self_sociability > 0.55):
+                other = self.rng.choice(p.location_agents)
+                return take(Intent(action="speak", args={"to": other},
+                                   say="walk with me to the hall — I need your vote before this splits us"),
+                            "unrest — the leader works the room", 0.82)
+            if p.location_agents:
+                other = self.rng.choice(p.location_agents)
+                return take(Intent(action="speak", args={"to": other},
+                                   say="we either pass a law tonight or this gets worse"),
+                            "unrest — rally whoever is here", 0.8)
+
+        if "bank_run" in p.active_crises:
+            if p.self_location != "tavern" and self.rng.random() < 0.55:
+                return take(Intent(action="move", args={"destination": "tavern"}),
+                            "bank run — find people before trust dies", 0.86)
+            if p.location_agents:
+                other = self.rng.choice(p.location_agents)
+                line = ("hold your coin — I will not trade in this panic"
+                        if p.self_risk_tolerance < 0.45
+                        else "if we stop trading the town starves anyway")
+                return take(Intent(action="speak", args={"to": other}, say=line),
+                            "bank run — talk someone through the panic", 0.8)
+        return None
 
     # Reference price: what a "fair" price-per-unit-of-food looks like,
     # used by the RECEIVING side of a trade to judge an offer. This must
@@ -400,7 +551,7 @@ class RuleBasedDecider:
         distortion = min(buzz, 0.6)  # mirrors chaos.SPECULATION_MAX_PRICE_DISTORTION
         price_ratio *= (1.0 + distortion)
 
-        tolerance = 1.0 + (p.self_generosity * 0.5)  # generous: tolerate up to 1.5x fair price
+        tolerance = 1.0 + (p.self_generosity * 0.5) - p.trade_fairness_bonus
         if price_ratio <= tolerance:
             return Intent(action="trade_accept", args={"offer_id": offer["offer_id"]})
         return Intent(action="trade_reject", args={"offer_id": offer["offer_id"]})
@@ -472,19 +623,122 @@ class RuleBasedDecider:
         else:
             yes_probability = base_yes_probability
 
+        target = (proposal.get("rule_args") or {}).get("target_agent")
+        if target == agent_id:
+            yes_probability = 0.05
+        elif proposal.get("rule_type") == "expel" and any(n.get("id") == target for n in p.notorious):
+            yes_probability = min(0.95, yes_probability + 0.28)
+        elif proposal.get("rule_type") == "welcome" and any(n.get("id") == target for n in p.newcomers):
+            yes_probability = min(0.95, yes_probability + 0.2)
+        elif proposal.get("emergency") or (proposal.get("vote_rules") or {}).get("emergency"):
+            yes_probability = min(0.9, yes_probability + 0.12)
+        if p.is_leader and proposal.get("proposed_by") == agent_id:
+            yes_probability = min(0.95, yes_probability + 0.15)
+
         vote = "yes" if self.rng.random() < yes_probability else "no"
         return Intent(action="vote", args={"proposal_id": proposal["proposal_id"], "choice": vote})
 
-    def _socialize(self, agent_id: str, p: Perception) -> Intent:
-        """Pick a random other agent present at this location and either
-        gossip about them (30% chance) to exercise gossip/reputation
-        propagation, or simply speak to them (70% chance).
+    def _maybe_lobby(self, agent_id: str, p: Perception, take):
+        """Leader, sponsor, or official works the room one name at a time."""
+        if p.expelled or not p.lobby_targets:
+            return None
+        deadlock = any(prop.get("deadlock") for prop in p.open_proposals)
+        sponsor = any(prop.get("proposed_by") == agent_id for prop in p.open_proposals)
+        if not (p.is_leader or sponsor or deadlock or p.active_crises):
+            return None
+        if not (p.is_leader or sponsor) and not deadlock:
+            return None
+        here = [t for t in p.lobby_targets if t.get("id") in p.location_agents]
+        pick = here[0] if here else p.lobby_targets[0]
+        if pick.get("id") not in p.location_agents:
+            dest = pick.get("location") or "town_hall"
+            if dest != p.self_location:
+                return take(Intent(action="move", args={"destination": dest}),
+                            "lobby — find the next vote", 0.8)
+        name = pick.get("name") or pick.get("id")
+        lean = pick.get("lean") or "yes"
+        line = (f"{name}, I need your {lean} on this — the hall is split"
+                if deadlock else
+                f"{name}, walk this through with me. Vote {lean}.")
+        return take(Intent(
+            action="lobby",
+            args={"to": pick["id"], "proposal_id": pick["proposal_id"], "lean": lean},
+            say=line,
+        ), "lobby one member at a time", 0.83)
 
-        Returns a "gossip" or "speak" Intent.
-        """
+    def _maybe_sanction(self, agent_id: str, p: Perception, take):
+        """Notorious names get a suspend or expel motion; newcomers get a welcome."""
+        if p.self_location != "town_hall" or p.open_proposals or not p.can_vote:
+            return None
+        if p.newcomers and self.rng.random() < 0.45:
+            guest = p.newcomers[0]
+            return take(Intent(action="propose_rule", args={
+                "rule_type": "welcome",
+                "rule_args": {"target_agent": guest["id"]},
+            }), f"welcome {guest.get('name') or guest['id']} onto the roll", 0.72)
+        if not p.notorious:
+            return None
+        mark = p.notorious[0]
+        if mark.get("id") == agent_id:
+            return None
+        civic = p.is_leader or p.self_rule_respect > 0.4
+        if not civic and self.rng.random() > 0.35:
+            return None
+        if mark.get("reputation", 1) < 0.18 and (p.is_leader or p.self_rule_respect > 0.5):
+            return take(Intent(action="propose_rule", args={
+                "rule_type": "expel",
+                "rule_args": {"target_agent": mark["id"]},
+            }), f"expel notorious {mark.get('name') or mark['id']}", 0.76)
+        return take(Intent(action="propose_rule", args={
+            "rule_type": "suspend_vote",
+            "rule_args": {"target_agent": mark["id"]},
+        }), f"suspend the vote of {mark.get('name') or mark['id']}", 0.7)
+
+    def _socialize(self, agent_id: str, p: Perception) -> Intent:
+        """Gossip with a point: scandal, expulsion talk, welcome, or a headline."""
         other = self.rng.choice(p.location_agents)
-        # Small chance of gossiping about a third party rather than just
-        # speaking, to exercise gossip/reputation propagation.
-        if self.rng.random() < 0.3 and len(p.location_agents) > 0:
-            return Intent(action="gossip", args={"about": other}, say=f"Did you hear about {other}?")
-        return Intent(action="speak", args={"to": other}, say="Good day.")
+        other_name = p.nearby_names.get(other, other)
+        headlines = [h for h in p.public_headlines if h.get("about") and h.get("about") != agent_id]
+
+        if p.newcomers and self.rng.random() < 0.35:
+            guest = self.rng.choice(p.newcomers)
+            return Intent(
+                action="gossip",
+                args={"about": guest["id"], "tone": "welcome"},
+                say=f"have you met {guest.get('name') or guest['id']}? the town could use a new face",
+            )
+        if p.notorious and self.rng.random() < 0.22:
+            mark = self.rng.choice(p.notorious)
+            mark_name = mark.get("name") or mark["id"]
+            if mark.get("reputation", 1) < 0.18:
+                return Intent(
+                    action="gossip",
+                    args={"about": mark["id"], "tone": "expel"},
+                    say=f"{mark_name} has become a stain — I say we expel them before the next vote",
+                )
+            return Intent(
+                action="gossip",
+                args={"about": mark["id"], "tone": "scandal"},
+                say=f"did you hear the scandal around {mark_name}? I would not trust their ballot",
+            )
+        if p.town_leader_name and p.active_crises and self.rng.random() < 0.35:
+            return Intent(
+                action="speak",
+                args={"to": other},
+                say=f"{p.town_leader_name} is working the hall one vote at a time. Stay close.",
+            )
+        if headlines and self.rng.random() < 0.55:
+            headline = self.rng.choice(headlines)
+            return Intent(
+                action="gossip",
+                args={"about": headline["about"]},
+                say=headline.get("text") or f"Did you hear about {other_name}?",
+            )
+        if self.rng.random() < 0.3:
+            return Intent(
+                action="gossip",
+                args={"about": other, "tone": "chat"},
+                say=f"keep an eye on {other_name} — the tavern is writing a story about them",
+            )
+        return Intent(action="speak", args={"to": other},
+                      say=f"{other_name}, tell me who you are backing before the window closes.")

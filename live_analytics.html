@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Eidolon Analytics</title>
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" type="image/png" href="/static/favicon.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/live_shared.css">
+<style>
+  body { overflow: auto; }
+  #shell { grid-template-rows: 56px 1fr; height: 100vh; }
+  #work { overflow: auto; padding: 16px 18px 28px; }
+  #vizGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .panel { background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .panel h2 { font-size: 12px; color: var(--muted); margin: 0 0 8px; letter-spacing: 0.04em; }
+  canvas { width: 100% !important; max-height: 200px; }
+  @media (max-width: 1100px) { #vizGrid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <nav id="rail">
+    <a class="logo" href="/" title="Eidolon Society Lab"><img src="/static/eidolon-appicon.png" alt="Eidolon Society Lab"></a>
+    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="tip">Observe</span></a>
+    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3 2.5-5 6-5s6 2 6 5"/></svg><span class="tip">People</span></a>
+    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><circle cx="6" cy="8" r="2.2"/><circle cx="18" cy="7" r="2.2"/><circle cx="12" cy="17" r="2.2"/></svg><span class="tip">Relationships</span></a>
+    <a class="navbtn active" href="/analytics"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15v-4M12 15V8M16 15v-6"/></svg><span class="tip">Economy</span></a>
+    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><path d="M4 10h16M6 10v8M18 10v8M4 18h16M12 4l8 6H4z"/></svg><span class="tip">Politics</span></a>
+    <a class="navbtn active" href="/analytics"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/></svg><span class="tip">Forensics</span></a>
+    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v5l-5 9a3 3 0 0 0 2.6 4.4h8.8A3 3 0 0 0 19 17l-5-9V3"/></svg><span class="tip">Experiments</span></a>
+  </nav>
+  <div id="shell">
+    <header id="topbar">
+      <h1><img class="wordmark" src="/static/eidolon-wordmark-ui.png" alt="Eidolon Society Lab"></h1>
+      <div id="vitals">
+        <div class="vital keep">Population<b id="popLabel">16</b></div>
+        <div class="vital keep">Treasury<b><span id="treasuryLabel">$0</span><span class="delta" id="treasuryDelta"></span></b></div>
+        <div class="vital">Gini<b id="giniLabel">—</b></div>
+        <div class="vital">Happiness<b id="happyLabel">—</b></div>
+        <div class="vital">Active laws<b id="lawsLabel">0</b></div>
+        <div class="vital">Proposals<b id="propLabel">0</b></div>
+        <div class="vital">Leader<b id="leaderLabel">—</b></div>
+        <div class="vital" id="crisisVital">Crises<b id="crisisLabel">0</b></div>
+        <div class="vital" id="alertVital">Anomaly<b id="alertLabel">0</b></div>
+      </div>
+      <div id="clock"><b id="clockTime">00:14</b><span id="clockDay">Day 1</span> · <span id="status">connecting</span></div>
+    </header>
+    <div id="work">
+      <p style="color:var(--muted);font-size:13px;margin:0 0 14px">Town-wide reconstruction: inequality, coordination, occupancy, and domain crossings. The living town stays on Observe.</p>
+      <div id="vizGrid">
+        <div class="panel"><h2>Lorenz curve — wealth inequality</h2><canvas id="lorenzChart"></canvas></div>
+        <div class="panel"><h2>Money vs reputation</h2><canvas id="scatterChart"></canvas></div>
+        <div class="panel"><h2>Event mix (this tick)</h2><canvas id="mixChart"></canvas></div>
+        <div class="panel"><h2>Gini / entropy / anomaly</h2><canvas id="tsChart"></canvas></div>
+        <div class="panel"><h2>Social graph</h2><svg id="netSvg" viewBox="0 0 300 230" style="width:100%;height:190px"></svg></div>
+        <div class="panel"><h2>Location occupancy heatmap</h2><svg id="heatSvg" viewBox="0 0 320 150" style="width:100%;height:170px"></svg></div>
+        <div class="panel"><h2>Domain crossings</h2><svg id="domainSvg" viewBox="0 0 320 150" style="width:100%;height:160px"></svg></div>
+        <div class="panel"><h2>Money by agent</h2><canvas id="moneyChart"></canvas></div>
+        <div class="panel"><h2>Faction membership</h2><div id="factionBars" style="font-size:12px;line-height:1.7;color:#c5cde0"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="/live_shared.js"></script>
+<script>
+const darkScale = {
+  x: { ticks: { color: '#8b93a8', font: { size: 9 } }, grid: { color: '#1d2638' } },
+  y: { ticks: { color: '#8b93a8', font: { size: 9 } }, grid: { color: '#1d2638' } }
+};
+let moneyChart, lorenzChart, scatterChart, mixChart, tsChart;
+
+function updateMoneyChart(frame) {
+  const ids = Object.keys(frame.agents);
+  const labels = ids.map(nameOf);
+  const data = ids.map(id => frame.agents[id].money);
+  const colors = ids.map(agentColor);
+  if (!moneyChart) {
+    moneyChart = new Chart(document.getElementById('moneyChart'), {
+      type: 'bar',
+      data: { labels, datasets: [{ data, backgroundColor: colors }] },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: darkScale }
+    });
+  } else {
+    moneyChart.data.labels = labels;
+    moneyChart.data.datasets[0].data = data;
+    moneyChart.update('none');
+  }
+}
+function updateLorenz(lorenz) {
+  const dataEq = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+  const xs = (lorenz && lorenz.x) || [0, 1];
+  const ys = (lorenz && lorenz.y) || [0, 1];
+  const dataTown = xs.map((x, i) => ({ x, y: ys[i] }));
+  if (!lorenzChart) {
+    lorenzChart = new Chart(document.getElementById('lorenzChart'), {
+      type: 'line',
+      data: { datasets: [
+        { label: 'equality', data: dataEq, borderColor: '#6b6890', pointRadius: 0, borderDash: [4, 3] },
+        { label: 'town', data: dataTown, borderColor: '#9b8cff', pointRadius: 0, tension: 0.15 }
+      ]},
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { type: 'linear', min: 0, max: 1, title: { display: true, text: 'population', color: '#8b93a8', font: { size: 10 } }, ...darkScale.x },
+          y: { min: 0, max: 1, title: { display: true, text: 'wealth', color: '#8b93a8', font: { size: 10 } }, ...darkScale.y }
+        }
+      }
+    });
+  } else {
+    lorenzChart.data.datasets[1].data = dataTown;
+    lorenzChart.update('none');
+  }
+}
+function updateScatter(frame) {
+  const points = Object.entries(frame.agents).map(([id, st]) => ({
+    x: st.money, y: st.reputation,
+    backgroundColor: (frame.factions || {})[id] ? factionColor(frame.factions[id]) : agentColor(id)
+  }));
+  if (!scatterChart) {
+    scatterChart = new Chart(document.getElementById('scatterChart'), {
+      type: 'scatter',
+      data: { datasets: [{ data: points, backgroundColor: points.map(p => p.backgroundColor), pointRadius: 5 }] },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { title: { display: true, text: 'money', color: '#8b93a8', font: { size: 10 } }, ...darkScale.x },
+          y: { min: 0, max: 1, title: { display: true, text: 'reputation', color: '#8b93a8', font: { size: 10 } }, ...darkScale.y }
+        }
+      }
+    });
+  } else {
+    scatterChart.data.datasets[0].data = points;
+    scatterChart.data.datasets[0].backgroundColor = points.map(p => p.backgroundColor);
+    scatterChart.update('none');
+  }
+}
+function updateMix(mix) {
+  const skip = new Set(['move', 'idle']);
+  const labels = Object.keys(mix).filter(k => !skip.has(k));
+  const data = labels.map(k => mix[k]);
+  if (!mixChart) {
+    mixChart = new Chart(document.getElementById('mixChart'), {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data, backgroundColor: ['#7f77dd','#1d9e75','#d85a30','#56ccf2','#e24b4a','#f2c94c','#bb6bd9','#888780'] }] },
+      options: { responsive: true, plugins: { legend: { labels: { color: '#8b93a8', font: { size: 9 }, boxWidth: 10 } } } }
+    });
+  } else {
+    mixChart.data.labels = labels;
+    mixChart.data.datasets[0].data = data;
+    mixChart.update('none');
+  }
+}
+function updateTimeseries() {
+  const labels = metricsHistory.map(h => h.tick);
+  if (!tsChart) {
+    tsChart = new Chart(document.getElementById('tsChart'), {
+      type: 'line',
+      data: { labels, datasets: [
+        { label: 'Gini', data: metricsHistory.map(h => h.gini), borderColor: '#9b8cff', pointRadius: 0, borderWidth: 1.6 },
+        { label: 'entropy', data: metricsHistory.map(h => h.entropy), borderColor: '#3dce9a', pointRadius: 0, borderWidth: 1.6 },
+        { label: 'anomaly', data: metricsHistory.map(h => h.anomaly), borderColor: '#ef5b5b', pointRadius: 0, borderWidth: 1.6 }
+      ]},
+      options: { responsive: true, plugins: { legend: { labels: { color: '#8b93a8', font: { size: 9 }, boxWidth: 10 } } },
+        scales: { x: { display: false }, y: { min: 0, max: 1, ...darkScale.y } } }
+    });
+  } else {
+    tsChart.data.labels = labels;
+    tsChart.data.datasets[0].data = metricsHistory.map(h => h.gini);
+    tsChart.data.datasets[1].data = metricsHistory.map(h => h.entropy);
+    tsChart.data.datasets[2].data = metricsHistory.map(h => h.anomaly);
+    tsChart.update('none');
+  }
+}
+function updateNetwork(frame) {
+  const svg = document.getElementById('netSvg');
+  svg.innerHTML = '';
+  const ids = Object.keys(frame.agents);
+  const n = ids.length;
+  const cx = 150, cy = 112, r = 88;
+  const pos = {};
+  ids.forEach((id, i) => {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    pos[id] = { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+  });
+  (frame.relationship_edges || []).forEach(([a, b, w]) => {
+    if (!pos[a] || !pos[b]) return;
+    svg.appendChild(svgEl('line', {
+      x1: pos[a].x, y1: pos[a].y, x2: pos[b].x, y2: pos[b].y,
+      stroke: w >= 0 ? '#3dce9a' : '#ef5b5b',
+      'stroke-width': Math.max(0.6, Math.abs(w) * 2.4), opacity: 0.55
+    }));
+  });
+  commWindow.forEach(e => {
+    if (!pos[e.a] || !pos[e.b]) return;
+    svg.appendChild(svgEl('line', {
+      x1: pos[e.a].x, y1: pos[e.a].y, x2: pos[e.b].x, y2: pos[e.b].y,
+      stroke: '#e8c36a', 'stroke-width': 0.8, opacity: 0.35
+    }));
+  });
+  ids.forEach(id => {
+    const p = pos[id];
+    const fid = (frame.factions || {})[id];
+    svg.appendChild(svgEl('circle', {
+      cx: p.x, cy: p.y, r: 6, fill: agentColor(id),
+      stroke: fid ? factionColor(fid) : '#00000055', 'stroke-width': fid ? 2 : 1
+    }));
+  });
+}
+function updateHeatmap() {
+  const svg = document.getElementById('heatSvg');
+  svg.innerHTML = '';
+  const locs = Object.keys(LOCS);
+  const rows = metricsHistory.slice(-40);
+  if (!rows.length) return;
+  const cellW = 280 / Math.max(rows.length, 1);
+  const cellH = 24;
+  locs.forEach((loc, ri) => {
+    const label = svgEl('text', { x: 4, y: 22 + ri * cellH, fill: '#8b93a8', 'font-size': 9 });
+    label.textContent = loc.replace('_', ' ');
+    svg.appendChild(label);
+    rows.forEach((row, ci) => {
+      const count = (row.location_counts || {})[loc] || 0;
+      const t = Math.min(1, count / 8);
+      svg.appendChild(svgEl('rect', {
+        x: 52 + ci * cellW, y: 10 + ri * cellH, width: Math.max(1.5, cellW - 0.4), height: cellH - 2, rx: 1,
+        fill: 'rgba(46,196,182,' + (0.12 + t * 0.88) + ')'
+      }));
+    });
+  });
+}
+function updateDomains(domains, crossings) {
+  const svg = document.getElementById('domainSvg');
+  svg.innerHTML = '';
+  const boxes = [
+    { key: 'social', x: 20, label: 'social' },
+    { key: 'political', x: 120, label: 'political' },
+    { key: 'economic', x: 220, label: 'economic' }
+  ];
+  boxes.forEach((b, i) => {
+    if (i < boxes.length - 1) {
+      const lit = crossings.some(c => c.indexOf(b.key) >= 0 && c.indexOf(boxes[i + 1].key) >= 0);
+      svg.appendChild(svgEl('line', {
+        x1: b.x + 72, y1: 70, x2: boxes[i + 1].x, y2: 70,
+        stroke: lit ? '#e8c36a' : '#2a3348', 'stroke-width': lit ? 3 : 1.5
+      }));
+    }
+    svg.appendChild(svgEl('rect', { x: b.x, y: 36, width: 72, height: 68, rx: 8, fill: '#162033', stroke: '#2ec4b655' }));
+    const t = svgEl('text', { x: b.x + 36, y: 58, fill: '#c5cde0', 'font-size': 10, 'text-anchor': 'middle' });
+    t.textContent = b.label;
+    svg.appendChild(t);
+    const n = svgEl('text', { x: b.x + 36, y: 82, fill: '#e8edf7', 'font-size': 16, 'text-anchor': 'middle' });
+    n.textContent = String(domains[b.key] || 0);
+    svg.appendChild(n);
+  });
+}
+function updateFactions(frame) {
+  const names = frame.faction_names || {};
+  const members = {};
+  Object.entries(frame.factions || {}).forEach(([id, fid]) => {
+    (members[fid] = members[fid] || []).push(nameOf(id));
+  });
+  const el = document.getElementById('factionBars');
+  const ids = Object.keys(members);
+  if (!ids.length) { el.innerHTML = '<div style="color:#8b93a8">no factions yet</div>'; return; }
+  const total = Object.keys(frame.agents).length;
+  el.innerHTML = ids.map(fid => {
+    const list = members[fid];
+    const pct = Math.round(100 * list.length / total);
+    return '<div style="margin-bottom:8px"><div>' + escapeHtml(names[fid] || fid) +
+      ' · ' + list.length + ' (' + pct + '%)</div>' +
+      '<div style="height:8px;background:#1b2436;border-radius:4px;overflow:hidden">' +
+      '<div style="width:' + pct + '%;height:8px;background:' + factionColor(fid) + '"></div></div>' +
+      '<div style="color:#8b93a8">' + list.map(escapeHtml).join(', ') + '</div></div>';
+  }).join('');
+}
+
+function renderFrame(frame) {
+  const m = frame.metrics || {};
+  updateHeader(frame);
+  recordMetrics(frame);
+  updateMoneyChart(frame);
+  updateLorenz(m.lorenz);
+  updateScatter(frame);
+  updateMix(m.event_mix || {});
+  updateTimeseries();
+  updateNetwork(frame);
+  updateHeatmap();
+  updateDomains(m.domains || { social: 0, political: 0, economic: 0 }, m.crossings || []);
+  updateFactions(frame);
+}
+bootLab();
+</script>
+</body>
+</html>

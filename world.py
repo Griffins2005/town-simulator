@@ -121,6 +121,27 @@ class World:
         # type is added -- the same reasoning as active_rules being a
         # flexible dict rather than fixed fields.
         self.active_crises: set[str] = set()
+        # crisis tag -> 0..1 how hard it hits, and remaining ticks before
+        # housekeeping is allowed to clear it. Injected crises use these
+        # so a mild unrest is not wiped the same tick just because Gini
+        # is below the spontaneous trigger.
+        self.crisis_intensity: dict[str, float] = {}
+        self.crisis_hold: dict[str, int] = {}
+
+        # Tavern "notice board": recent rumors posted in public, the town
+        # analog of an improvised shared message channel. Populated by
+        # chaos.update_influence_campaigns when gossip happens at the
+        # tavern (or a campaign forms). Cosmetic + Perception input;
+        # never authoritative simulation state.
+        self.notice_board: list[dict] = []
+
+        # Active reconstructed influence campaigns (gossip storms about
+        # one target). Written by chaos.py, read by analytics/recorder.
+        self.active_campaigns: list[dict] = []
+
+        # Validated inventions currently in the world. Populated only by
+        # inventions.py after a legal invent action -- never by a Decider.
+        self.inventions: list[dict] = []
 
     def get_location(self, name: str) -> Location:
         """Look up a location by name.

@@ -95,8 +95,20 @@ class Agent:
     # consequential if discovered (further to fall). Starts at 0 for
     # every agent -- nobody is born an official.
     official_track_record: int = 0
+    # Civic standing. Expelled residents stay in town as outcasts but
+    # lose the franchise; a temporary suspension keeps them in the
+    # census while they cannot vote. Mutated only by governance.py.
+    voting_rights: bool = True
+    vote_suspended_until: int = 0
+    expelled: bool = False
     memory: MemoryLog = field(default_factory=MemoryLog)
     decider: object = None  # type: Decider, kept loose to avoid circular import
+
+    def can_vote(self, tick: int) -> bool:
+        """True if this resident may cast or be counted toward quorum."""
+        if self.expelled or not self.voting_rights:
+            return False
+        return tick >= self.vote_suspended_until
 
     def relationship_with(self, other_id: str) -> float:
         """Get this agent's opinion of `other_id`, defaulting to neutral (0.0)

@@ -111,6 +111,12 @@ UNREST_GINI_TRIGGER = 0.55
 UNREST_CHANCE_PER_TICK_ABOVE_TRIGGER = 0.02
 UNREST_TAG = "unrest"
 UNREST_REPUTATION_DAMPING = 0.02
+FAMINE_TAG = "famine"
+
+# Observer-injected crises: label -> magnitude and how many ticks the
+# town must live with it before housekeeping may clear the flag.
+CRISIS_INTENSITY = {"mild": 0.35, "serious": 0.65, "severe": 0.95}
+CRISIS_HOLD_TICKS = {"mild": 10, "serious": 18, "severe": 28}
 
 FACTION_FORM_THRESHOLD_AGREEMENTS = 3
 FACTION_VOTE_CORRELATION = 0.3
@@ -188,7 +194,9 @@ def apply_corruption_if_opportunity(world: World, agents: dict[str, Agent], rng:
     global _last_corruption_tick
     if world.treasury <= 0:
         return
-    if _last_corruption_tick is not None and world.tick - _last_corruption_tick < CORRUPTION_COOLDOWN_TICKS:
+    import inventions
+    cooldown = CORRUPTION_COOLDOWN_TICKS + inventions.corruption_cooldown_bonus(world)
+    if _last_corruption_tick is not None and world.tick - _last_corruption_tick < cooldown:
         return
     for agent in agents.values():
         chance = world.treasury * CORRUPTION_BASE_CHANCE_PER_TREASURY_UNIT
@@ -229,7 +237,9 @@ def reset_corruption_cooldown() -> None:
     _last_corruption_tick = None
 
 
-def apply_market_shocks_if_triggered(world: World, rng: random.Random) -> None:
+def apply_market_shocks_if_triggered(
+    world: World, rng: random.Random, agents: dict[str, Agent] | None = None,
+) -> None:
     """Called once per tick by engine.py. With small independent
     probability, triggers a scarcity (blight) or abundance (bumper
     harvest) shock at a randomly chosen resource-bearing location,
@@ -244,16 +254,141 @@ def apply_market_shocks_if_triggered(world: World, rng: random.Random) -> None:
     """
     if rng.random() >= MARKET_SHOCK_CHANCE_PER_TICK:
         return
+    force_market_shock(world, rng, agents=agents)
+
+
+def force_market_shock(
+    world: World,
+    rng: random.Random,
+    intensity: str | float = "serious",
+    agents: dict[str, Agent] | None = None,
+) -> None:
+    """Apply a market shock. Scarcity becomes a felt famine the town must fight."""
     resource_locations = [loc for loc in world.locations.values() if loc.resources]
     if not resource_locations:
         return
     loc = rng.choice(resource_locations)
     is_scarcity = rng.random() < 0.6
-    multiplier = MARKET_SHOCK_SCARCITY_MULTIPLIER if is_scarcity else MARKET_SHOCK_ABUNDANCE_MULTIPLIER
+    if is_scarcity:
+        inject_crisis(world, agents or {}, "famine", intensity, rng, location=loc.name)
+        return
+    multiplier = MARKET_SHOCK_ABUNDANCE_MULTIPLIER
     for resource_kind in list(loc.resources.keys()):
         loc.resources[resource_kind] = round(loc.resources[resource_kind] * multiplier, 3)
-    world.log_event("market_shock", location=loc.name,
-                     shock_kind="scarcity" if is_scarcity else "abundance", multiplier=multiplier)
+    world.log_event("market_shock", location=loc.name, shock_kind="abundance", multiplier=multiplier)
+
+
+def resolve_intensity(level) -> tuple[str, float, int]:
+    """Map 'mild'/'serious'/'severe' or a 0-1 number to label, magnitude, hold."""
+    if isinstance(level, (int, float)) and not isinstance(level, bool):
+        mag = max(0.2, min(1.0, float(level)))
+        label = "severe" if mag >= 0.8 else "serious" if mag >= 0.5 else "mild"
+        return label, mag, int(8 + mag * 22)
+    key = str(level or "serious").lower()
+    if key not in CRISIS_INTENSITY:
+        key = "serious"
+    return key, CRISIS_INTENSITY[key], CRISIS_HOLD_TICKS[key]
+
+
+def _plant_crisis_memory(agents: dict[str, Agent], kind: str, text: str, tick: int) -> None:
+    if not agents:
+        return
+    for agent in agents.values():
+        agent.memory.add(MemoryEntry(
+            tick=tick, kind="crisis", subject=None, data={"text": text},
+        ))
+
+
+def inject_crisis(
+    world: World,
+    agents: dict[str, Agent],
+    kind: str,
+    intensity: str | float,
+    rng: random.Random,
+    location: str | None = None,
+) -> dict:
+    """Stamp a crisis the town can feel: resources, memories, hold time.
+
+    `kind`: famine | unrest | bank_run (market_shock maps to famine).
+    Housekeeping will not clear the tag while crisis_hold remains.
+    """
+    alias = {"market_shock": FAMINE_TAG, "shock": FAMINE_TAG, "scarcity": FAMINE_TAG}
+    tag = alias.get(kind, kind)
+    if tag not in (FAMINE_TAG, UNREST_TAG, BANK_RUN_TAG):
+        tag = UNREST_TAG
+    label, mag, hold = resolve_intensity(intensity)
+
+    if tag == FAMINE_TAG:
+        farm = world.locations.get(location) or world.locations.get("farm")
+        if farm and farm.resources:
+            for resource_kind in list(farm.resources.keys()):
+                farm.resources[resource_kind] = round(
+                    farm.resources[resource_kind] * max(0.05, 1.0 - 0.85 * mag), 3
+                )
+        for agent in agents.values():
+            food = agent.inventory.get("food", 0.0)
+            if food > 0:
+                agent.inventory["food"] = round(max(0.0, food * (1.0 - 0.35 * mag)), 2)
+        text = f"{label} famine — stores failing, people scramble for food"
+        loc_name = farm.name if farm else "farm"
+        world.log_event("market_shock", location=loc_name, shock_kind="scarcity",
+                        multiplier=round(1.0 - 0.85 * mag, 3), intensity=label)
+    elif tag == UNREST_TAG:
+        for agent in agents.values():
+            agent.reputation = max(0.0, agent.reputation - 0.08 * mag)
+        world.treasury = max(0.0, round(world.treasury * (1.0 - 0.2 * mag), 2))
+        text = f"{label} unrest — streets tense, people demand a political answer"
+    else:
+        for agent in agents.values():
+            agent.reputation = max(0.05, agent.reputation - 0.06 * mag)
+        text = f"{label} bank run — trust collapses, people hoard and refuse strangers"
+
+    world.active_crises.add(tag)
+    world.crisis_intensity[tag] = mag
+    world.crisis_hold[tag] = max(world.crisis_hold.get(tag, 0), hold)
+    _plant_crisis_memory(agents, tag, text, world.tick)
+    world.notice_board.append({
+        "tick": world.tick, "from": "observer", "about": None, "text": text[:160],
+    })
+    del world.notice_board[:-8]
+    world.log_event("crisis_started", crisis=tag, intensity=label, magnitude=round(mag, 2),
+                    hold=hold, injected=True)
+    return {"crisis": tag, "intensity": label, "hold": hold, "tick": world.tick}
+
+
+def tick_crises(world: World, agents: dict[str, Agent], rng: random.Random) -> None:
+    """Ongoing pressure while a held crisis is live; then expire it."""
+    for tag in list(world.crisis_hold.keys()):
+        mag = world.crisis_intensity.get(tag, 0.5)
+        if tag == FAMINE_TAG:
+            farm = world.locations.get("farm")
+            if farm and farm.resources:
+                for resource_kind in list(farm.resources.keys()):
+                    farm.resources[resource_kind] = round(
+                        farm.resources[resource_kind] * (1.0 - 0.04 * mag), 3
+                    )
+            if rng.random() < 0.35 * mag:
+                hungry = [a for a in agents.values() if a.inventory.get("food", 0) > 0.2]
+                if hungry:
+                    victim = rng.choice(hungry)
+                    victim.inventory["food"] = round(
+                        max(0.0, victim.inventory["food"] - 0.25 * mag), 2
+                    )
+        elif tag == UNREST_TAG:
+            for agent in agents.values():
+                agent.reputation = max(0.0, agent.reputation - 0.01 * mag)
+        elif tag == BANK_RUN_TAG:
+            if rng.random() < 0.4 * mag:
+                for agent in agents.values():
+                    if agent.money > 1:
+                        agent.money = round(agent.money * (1.0 - 0.02 * mag), 2)
+
+        world.crisis_hold[tag] = world.crisis_hold.get(tag, 0) - 1
+        if world.crisis_hold[tag] <= 0:
+            world.active_crises.discard(tag)
+            world.crisis_intensity.pop(tag, None)
+            world.crisis_hold.pop(tag, None)
+            world.log_event("crisis_ended", crisis=tag, expired=True)
 
 
 def update_bank_run_state(world: World, agents: dict[str, Agent]) -> None:
@@ -266,11 +401,21 @@ def update_bank_run_state(world: World, agents: dict[str, Agent]) -> None:
         return
     avg_reputation = sum(a.reputation for a in agents.values()) / len(agents)
     was_active = BANK_RUN_TAG in world.active_crises
-    if not was_active and avg_reputation < BANK_RUN_REPUTATION_TRIGGER:
+    trigger = BANK_RUN_REPUTATION_TRIGGER
+    # A scandal-echo campaign (many people gossiping about a caught
+    # embezzler) is the social->economic crossing: chatter makes a bank
+    # run slightly easier to start. Still needs low average reputation.
+    if any(c.get("campaign_kind") == "scandal_echo" for c in world.active_campaigns):
+        trigger -= 0.04
+    if not was_active and avg_reputation < trigger:
         world.active_crises.add(BANK_RUN_TAG)
+        world.crisis_intensity.setdefault(BANK_RUN_TAG, 0.55)
         world.log_event("crisis_started", crisis=BANK_RUN_TAG, avg_reputation=round(avg_reputation, 3))
     elif was_active and avg_reputation >= BANK_RUN_REPUTATION_RECOVERY:
+        if world.crisis_hold.get(BANK_RUN_TAG, 0) > 0:
+            return
         world.active_crises.discard(BANK_RUN_TAG)
+        world.crisis_intensity.pop(BANK_RUN_TAG, None)
         world.log_event("crisis_ended", crisis=BANK_RUN_TAG, avg_reputation=round(avg_reputation, 3))
 
 
@@ -329,12 +474,16 @@ def update_unrest_state(world: World, agents: dict[str, Agent], rng: random.Rand
     if gini >= UNREST_GINI_TRIGGER:
         if not was_active and rng.random() < UNREST_CHANCE_PER_TICK_ABOVE_TRIGGER:
             world.active_crises.add(UNREST_TAG)
+            world.crisis_intensity.setdefault(UNREST_TAG, 0.55)
             world.log_event("crisis_started", crisis=UNREST_TAG, gini=round(gini, 3))
         if was_active:
             for agent in agents.values():
                 agent.reputation = max(0.0, agent.reputation - UNREST_REPUTATION_DAMPING)
     elif was_active:
+        if world.crisis_hold.get(UNREST_TAG, 0) > 0:
+            return
         world.active_crises.discard(UNREST_TAG)
+        world.crisis_intensity.pop(UNREST_TAG, None)
         world.log_event("crisis_ended", crisis=UNREST_TAG, gini=round(gini, 3))
 
 
@@ -450,21 +599,104 @@ def _merge_into_faction(world: World, a_id: str, b_id: str, rng: random.Random) 
         world.log_event("faction_joined", agent=b_id, faction=faction_id)
 
     if is_new_faction:
-        name = _generate_faction_name(rng)
+        name = _generate_faction_name(rng, world)
         world.faction_names[faction_id] = name
         world.log_event("faction_formed", faction=faction_id, name=name)
 
 
-def _generate_faction_name(rng: random.Random) -> str:
-    """Generate a two-word display name (e.g. "Lantern Circle") from the
-    injected, seeded `rng` -- deterministic across same-seed runs, same
-    as every other randomized event in this module. See the module-level
-    word-bank comment for why this is a plain in-module list rather than
-    a file or external call.
+def _generate_faction_name(rng: random.Random, world: World) -> str:
+    """Generate a unique two-word display name (e.g. "Lantern Circle")
+    from the injected, seeded `rng`. Rejects names already in
+    world.faction_names so two living factions never share a label.
     """
-    adjective = rng.choice(_FACTION_NAME_ADJECTIVES)
-    noun = rng.choice(_FACTION_NAME_NOUNS)
-    return f"{adjective} {noun}"
+    used = set(world.faction_names.values())
+    name = "Unnamed Bloc"
+    for _ in range(200):
+        name = f"{rng.choice(_FACTION_NAME_ADJECTIVES)} {rng.choice(_FACTION_NAME_NOUNS)}"
+        if name not in used:
+            return name
+    return f"{name} {world.tick}"
+
+
+# Gossip-storm detection: if enough distinct agents talk about the same
+# person in a short window, that is an influence campaign -- the town
+# analog of the HF incident's improvised message board / swarm chatter.
+# Detected here (clock-driven), not as an agent action, because no one
+# agent "decides" that a whisper campaign exists.
+CAMPAIGN_GOSSIP_WINDOW = 5
+CAMPAIGN_MIN_GOSSIPERS = 3
+_recent_gossip: list[tuple[int, str, str, str]] = []
+_active_campaigns: dict[str, dict] = {}
+
+
+def update_influence_campaigns(world: World, agents: dict[str, Agent]) -> None:
+    """Cluster recent gossip by target. A campaign starts when three or
+    more distinct agents gossip about the same person within
+    CAMPAIGN_GOSSIP_WINDOW ticks. Tavern gossip is also pinned to the
+    public notice board -- a visible shared channel, not a hidden one.
+    """
+    names = {aid: a.persona.name for aid, a in agents.items()}
+    tick = world.tick
+    for event in world.event_log:
+        if event.get("tick") != tick or event.get("kind") != "gossip":
+            continue
+        gossiper = event.get("agent")
+        about = event.get("about")
+        if not isinstance(gossiper, str) or not isinstance(about, str):
+            continue
+        _recent_gossip.append((tick, gossiper, about, event.get("said") or ""))
+        actor = agents.get(gossiper)
+        if actor and actor.location == "tavern":
+            world.notice_board.append({
+                "tick": tick,
+                "from": gossiper,
+                "about": about,
+                "text": event.get("said") or f"whisper about {names.get(about, about)}",
+            })
+
+    del world.notice_board[:-8]
+    _recent_gossip[:] = [row for row in _recent_gossip if tick - row[0] <= CAMPAIGN_GOSSIP_WINDOW]
+
+    by_about: dict[str, set[str]] = {}
+    for _t, gossiper, about, _said in _recent_gossip:
+        by_about.setdefault(about, set()).add(gossiper)
+
+    for target in list(_active_campaigns):
+        if len(by_about.get(target, set())) < CAMPAIGN_MIN_GOSSIPERS:
+            camp = _active_campaigns.pop(target)
+            world.log_event("campaign_ended", target=target, name=camp.get("name"))
+
+    for about, gossipers in by_about.items():
+        if len(gossipers) < CAMPAIGN_MIN_GOSSIPERS or about in _active_campaigns:
+            continue
+        campaign_kind = "rumor"
+        for event in reversed(world.event_log[-120:]):
+            if event.get("kind") == "corruption_scandal" and event.get("agent") == about:
+                campaign_kind = "scandal_echo"
+                break
+        name = f"whisper campaign on {names.get(about, about)}"
+        _active_campaigns[about] = {
+            "target": about, "campaign_kind": campaign_kind, "started_tick": tick, "name": name,
+        }
+        world.log_event(
+            "influence_campaign",
+            target=about,
+            campaign_kind=campaign_kind,
+            gossipers=sorted(gossipers),
+            name=name,
+        )
+        _buzz[about] = _buzz.get(about, 0.0) + 0.25
+
+    world.active_campaigns = [
+        {**camp, "gossipers": sorted(by_about.get(camp["target"], []))}
+        for camp in _active_campaigns.values()
+    ]
+
+
+def reset_campaigns() -> None:
+    """Clear influence-campaign bookkeeping between runs."""
+    _recent_gossip.clear()
+    _active_campaigns.clear()
 
 
 def reset_factions() -> None:
