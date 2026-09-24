@@ -45,6 +45,11 @@ class Persona:
     sociability: float = 0.5      # likelihood of seeking out other agents
     rule_respect: float = 0.5     # likelihood of complying with active_rules
     risk_tolerance: float = 0.5   # likelihood of breaking norms when self-interest is high
+    # Civic religion: a congregation id (see faith.py) and piety in [0, 1].
+    # Faith is identity; piety is how hard it pulls votes, gossip, and
+    # where the agent spends a quiet hour.
+    faith: str = "unaffiliated"
+    piety: float = 0.2
 
 
 @dataclass

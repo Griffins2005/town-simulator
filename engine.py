@@ -43,6 +43,7 @@ import chaos
 import decision_record
 import economy
 import governance
+import faith
 import inventions
 import town_factory
 from world import World
@@ -340,6 +341,11 @@ class Engine:
             for a in self.agents.values()
             if not a.expelled and not a.voting_rights
         ]
+        proposer_faith = None
+        if open_props:
+            sponsor = self.agents.get(open_props[0].get("proposed_by"))
+            if sponsor:
+                proposer_faith = getattr(sponsor.persona, "faith", None)
 
         return Perception(
             self_id=agent.agent_id,
@@ -385,6 +391,12 @@ class Engine:
             notorious=notorious,
             lobby_targets=self._lobby_targets_for(agent, open_props, leader),
             newcomers=newcomers,
+            self_faith=getattr(agent.persona, "faith", "unaffiliated"),
+            self_faith_name=faith.faith_name(getattr(agent.persona, "faith", None)),
+            self_piety=getattr(agent.persona, "piety", 0.2),
+            nearby_faiths={aid: getattr(self.agents[aid].persona, "faith", "unaffiliated")
+                           for aid in others_here},
+            proposer_faith=proposer_faith,
         )
 
     def _welcome_replacements(self) -> None:

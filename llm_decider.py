@@ -200,6 +200,8 @@ def _build_user_prompt(perception):
         f"Your traits (0-1 scale): industriousness={p.self_industriousness:.2f}, "
         f"generosity={p.self_generosity:.2f}, sociability={p.self_sociability:.2f}, "
         f"rule_respect={p.self_rule_respect:.2f}, risk_tolerance={p.self_risk_tolerance:.2f}.",
+        f"Your faith: {getattr(p, 'self_faith_name', 'Unaffiliated')} "
+        f"(piety {getattr(p, 'self_piety', 0):.2f}). Same-faith neighbors are easier to lobby.",
         f"Other agents here: {p.location_agents}.",
         f"Resources available to work here: {p.location_resources}.",
         f"Currently active town rules: {p.active_rules}.",

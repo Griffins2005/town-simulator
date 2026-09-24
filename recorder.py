@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 
 import analytics
+import faith
 import governance
 from agent import Agent
 from engine import Engine
@@ -45,11 +46,12 @@ from world import World
 # in the recorder rather than in world.py. If town_factory.py's
 # LOCATIONS list ever changes, add a matching entry here.
 DEFAULT_LOCATION_LAYOUT = {
-    "farm": {"x": 160, "y": 130},
-    "workshop": {"x": 180, "y": 430},
-    "market": {"x": 500, "y": 300},
-    "town_hall": {"x": 500, "y": 640},
-    "tavern": {"x": 840, "y": 210},
+    "farm": {"x": 220, "y": 620},
+    "workshop": {"x": 1180, "y": 420},
+    "market": {"x": 480, "y": 420},
+    "town_hall": {"x": 720, "y": 280},
+    "tavern": {"x": 820, "y": 480},
+    "chapel": {"x": 560, "y": 220},
 }
 
 
@@ -176,6 +178,9 @@ class Recorder:
                 "expelled": agent.expelled,
                 "can_vote": agent.can_vote(world.tick),
                 "official": agent.official_track_record,
+                "faith": getattr(agent.persona, "faith", "unaffiliated"),
+                "piety": round(getattr(agent.persona, "piety", 0.2), 3),
+                "memories": [m.as_text() for m in agent.memory.recent(16)],
             }
         metrics = analytics.compute_metrics(world, self.engine.agents, new_events)
         anomaly_score, anomaly_flags = analytics.score_anomalies(
@@ -227,7 +232,10 @@ class Recorder:
                     "sociability": round(agent.persona.sociability, 3),
                     "rule_respect": round(agent.persona.rule_respect, 3),
                     "risk_tolerance": round(agent.persona.risk_tolerance, 3),
+                    "piety": round(getattr(agent.persona, "piety", 0.2), 3),
                 },
+                "faith": getattr(agent.persona, "faith", "unaffiliated"),
+                "faith_name": faith.faith_name(getattr(agent.persona, "faith", None)),
                 # Recorded so the visualizer can show "this agent's mind
                 # was an LLM" vs "rule-based" in its detail popup,
                 # without the recorder needing to import llm_decider.py

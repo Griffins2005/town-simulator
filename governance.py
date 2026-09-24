@@ -325,6 +325,9 @@ def apply_lobby(actor: Agent, args: dict, world: World, agents: dict):
         weight += 0.08 * min(1.0, intensity)
     if target.persona.rule_respect > 0.75 and lean != prior and prior is not None:
         weight -= 0.08
+    from faith import same_faith
+    if same_faith(getattr(actor.persona, "faith", None), getattr(target.persona, "faith", None)):
+        weight += 0.10 * ((getattr(actor.persona, "piety", 0) + getattr(target.persona, "piety", 0)) / 2)
 
     if weight < 0.48:
         target.adjust_relationship(actor.agent_id, -0.04)

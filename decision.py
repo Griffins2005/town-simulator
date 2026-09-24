@@ -128,6 +128,11 @@ class Perception:
     notorious: list = field(default_factory=list)
     lobby_targets: list = field(default_factory=list)
     newcomers: list = field(default_factory=list)
+    self_faith: str = "unaffiliated"
+    self_faith_name: str = "Unaffiliated"
+    self_piety: float = 0.2
+    nearby_faiths: dict[str, str] = field(default_factory=dict)
+    proposer_faith: str | None = None
 
 
 @dataclass
@@ -320,6 +325,17 @@ class RuleBasedDecider:
         # structural priority-ordering problem, not a personality trait;
         # Phase 2's LLM agents should make this choice via actual
         # reasoning about competing needs, not a coin flip at all.
+        home = None
+        try:
+            from faith import faith_home
+            home = faith_home(p.self_faith)
+        except ImportError:
+            home = None
+        if (home and home != p.self_location and p.self_piety >= 0.55
+                and self.rng.random() < p.self_piety * 0.28):
+            return take(Intent(action="move", args={"destination": home}),
+                        f"piety — gather with the {p.self_faith_name}", 0.58)
+
         WANDERLUST_CHANCE = 0.12
         if self.rng.random() < WANDERLUST_CHANCE:
             dest = self._next_stop(p.self_location)
@@ -390,7 +406,7 @@ class RuleBasedDecider:
     # must only ever see what's in `Perception`, never the live Agent/World,
     # to keep the seam honest for Phase 2.
 
-    _CIRCUIT = ["farm", "workshop", "market", "tavern", "town_hall"]
+    _CIRCUIT = ["farm", "workshop", "market", "tavern", "town_hall", "chapel"]
 
     def _next_stop(self, current: str) -> str:
         """Fixed circulation order. A real agent's reason to be somewhere
@@ -634,6 +650,11 @@ class RuleBasedDecider:
             yes_probability = min(0.9, yes_probability + 0.12)
         if p.is_leader and proposal.get("proposed_by") == agent_id:
             yes_probability = min(0.95, yes_probability + 0.15)
+        from faith import same_faith
+        if same_faith(p.self_faith, p.proposer_faith):
+            yes_probability = min(0.95, yes_probability + 0.16 * p.self_piety)
+        elif p.proposer_faith and p.self_faith != "unaffiliated" and p.proposer_faith != p.self_faith:
+            yes_probability = max(0.08, yes_probability - 0.08 * p.self_piety)
 
         vote = "yes" if self.rng.random() < yes_probability else "no"
         return Intent(action="vote", args={"proposal_id": proposal["proposal_id"], "choice": vote})
@@ -720,6 +741,22 @@ class RuleBasedDecider:
                 action="gossip",
                 args={"about": mark["id"], "tone": "scandal"},
                 say=f"did you hear the scandal around {mark_name}? I would not trust their ballot",
+            )
+        if p.self_location == "chapel" and p.self_piety > 0.4 and self.rng.random() < 0.5:
+            return Intent(
+                action="speak",
+                args={"to": other},
+                say=f"{other_name}, the {p.self_faith_name} asks us to keep this town together.",
+            )
+        same = [aid for aid, faith in (p.nearby_faiths or {}).items()
+                if faith == p.self_faith and p.self_faith != "unaffiliated"]
+        if same and self.rng.random() < 0.3:
+            kin = self.rng.choice(same)
+            kin_name = p.nearby_names.get(kin, kin)
+            return Intent(
+                action="gossip",
+                args={"about": kin, "tone": "praise"},
+                say=f"{kin_name} stood with the {p.self_faith_name} when the hall wavered",
             )
         if p.town_leader_name and p.active_crises and self.rng.random() < 0.35:
             return Intent(

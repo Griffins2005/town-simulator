@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/live_shared.css">
 <style>
-  #injectMenu { display: none; position: absolute; bottom: 48px; left: 0; background: #151c2c; border: 1px solid var(--line); border-radius: 8px; padding: 8px; z-index: 8; min-width: 200px; }
+  #injectMenu { display: none; position: absolute; bottom: 100%; left: 0; background: #0e1522; border: 1px solid #2a3348; border-radius: 4px; padding: 6px; z-index: 8; min-width: 200px; }
   #injectMenu button { display: inline-block; margin: 2px; }
   #injectWrap { position: relative; }
   .votechip { display: inline-block; margin-right: 8px; font-size: 12px; }
@@ -19,12 +19,11 @@
   .side > div { flex: 1; }
   .tiny { font-size: 11px; color: var(--muted); }
   .tabs { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
-  .tab { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 4px 8px; border-radius: 6px; cursor: pointer; }
-  .tab.on { background: #1a2438; color: var(--ink); }
-  #inspFace { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; }
+  .tab { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+  .tab.on { background: #1d6b66; color: #fff; }
 </style>
 </head>
-<body>
+<body class="observe">
 <div id="app">
   <nav id="rail">
     <a class="logo" href="/" title="Eidolon Society Lab"><img src="/static/eidolon-appicon.png" alt="Eidolon Society Lab"></a>
@@ -55,10 +54,33 @@
     </header>
 
     <main id="stage">
-      <div id="townWrap">
-        <img id="townBg" src="/static/eidolon-town-night.png" alt="Eidolon town at night">
+      <div id="townWrap" class="view-town">
+        <img id="townBg" src="/static/eidolon-town-day.png" alt="Eidolon town in a river valley">
         <svg id="mapSvg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice"></svg>
-        <div id="townMark"><img src="/static/eidolon-mark.png" alt=""></div>
+      </div>
+      <div id="mapTools">
+        <div class="menu" id="layerMenu" data-mode="check">
+          <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">Map layers</button>
+          <div class="menu-pop" role="menu">
+            <label class="menu-row"><input type="checkbox" data-layer="residents" checked> Residents</label>
+            <label class="menu-row"><input type="checkbox" data-layer="relationships"> Relationships</label>
+            <label class="menu-row"><input type="checkbox" data-layer="factions" checked> Factions</label>
+            <label class="menu-row"><input type="checkbox" data-layer="crossings"> Domain crossings</label>
+            <label class="menu-row"><input type="checkbox" data-layer="anomalies"> Anomalies</label>
+            <label class="menu-row"><input type="checkbox" data-layer="terrain"> Terrain</label>
+            <label class="menu-row"><input type="checkbox" data-layer="water" checked> Water systems</label>
+          </div>
+        </div>
+        <div class="menu" id="viewMenu" data-mode="radio">
+          <button type="button" class="menu-trigger" id="viewTrigger" aria-haspopup="true" aria-expanded="false">View · Town</button>
+          <div class="menu-pop" role="menu">
+            <div class="menu-row is-on" data-view="town" tabindex="0">Town</div>
+            <div class="menu-row" data-view="topography" tabindex="0">Topography</div>
+            <div class="menu-row" data-view="landuse" tabindex="0">Land use</div>
+            <div class="menu-row" data-view="mobility" tabindex="0">Mobility</div>
+            <div class="menu-row" data-view="social" tabindex="0">Social graph</div>
+          </div>
+        </div>
       </div>
       <div id="voteFloat" class="float" style="display:none"></div>
       <div id="inventFloat" class="float" style="display:none"></div>
@@ -82,9 +104,17 @@
             <div>
               <div id="inspName" style="font-weight:700">click a resident</div>
               <div id="inspMeta" class="tiny"></div>
+              <div id="inspFaith" class="faith-chip"></div>
             </div>
           </div>
           <div id="trace"></div>
+          <div class="mem-filter" id="memFilter">
+            <label class="on"><input type="radio" name="memf" value="all" checked> All memories</label>
+            <label><input type="radio" name="memf" value="political"> Political</label>
+            <label><input type="radio" name="memf" value="social"> Social</label>
+            <label><input type="radio" name="memf" value="economic"> Economic</label>
+            <label><input type="radio" name="memf" value="inventions"> Inventions</label>
+          </div>
           <div class="tabs">
             <span class="tab on" data-tab="profile">Profile</span>
             <span class="tab" data-tab="rel">Relationships</span>
@@ -106,7 +136,16 @@
     <footer id="dock">
       <div id="controls">
         <button id="pauseBtn" type="button">pause</button>
-        <button id="speedBtn" type="button">speed 1x</button>
+        <div class="menu up" id="speedMenu" data-up="1" data-mode="radio">
+          <button type="button" class="menu-trigger" id="speedTrigger" aria-haspopup="true" aria-expanded="false">1×</button>
+          <div class="menu-pop" role="menu">
+            <div class="menu-row" data-delay="2.4" data-label="0.25×" tabindex="0">0.25×</div>
+            <div class="menu-row" data-delay="1.2" data-label="0.5×" tabindex="0">0.5×</div>
+            <div class="menu-row is-on" data-delay="0.6" data-label="1×" tabindex="0">1×</div>
+            <div class="menu-row" data-delay="0.3" data-label="2×" tabindex="0">2×</div>
+            <div class="menu-row" data-delay="0.15" data-label="4×" tabindex="0">4×</div>
+          </div>
+        </div>
         <div id="injectWrap">
           <button id="injectBtn" type="button">inject event</button>
           <div id="injectMenu">
@@ -124,7 +163,15 @@
             <button type="button" data-crisis="bank_run" data-intensity="severe">severe</button>
           </div>
         </div>
-        <button id="markFork" type="button">change conditions</button>
+        <div class="menu up" id="moreMenu" data-up="1">
+          <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">More actions</button>
+          <div class="menu-pop" role="menu">
+            <div class="menu-row" id="markFork" tabindex="0">Save checkpoint</div>
+            <div class="menu-row" id="forkSim" tabindex="0">Fork simulation</div>
+            <div class="menu-row" id="compareFork" tabindex="0">Compare branches</div>
+            <div class="menu-row" id="exportTrace" tabindex="0">Export trace</div>
+          </div>
+        </div>
         <div id="tickClock"><b id="tickNum">Tick 0</b><div id="forkNote">mark two ticks to compare</div></div>
       </div>
       <div id="timelineWrap">
@@ -138,9 +185,6 @@
           <span><i style="background:#ef5b5b"></i>anomaly</span>
         </div>
       </div>
-      <div id="forks">
-        <button id="compareFork" class="primary" type="button">compare branches</button>
-      </div>
     </footer>
   </div>
 </div>
@@ -148,59 +192,124 @@
 <script src="/live_shared.js"></script>
 <script>
 const VISUAL = {
-  farm: { x: 288, y: 250, label: 'Farm' },
-  town_hall: { x: 800, y: 198, label: 'Town Hall' },
-  market: { x: 416, y: 430, label: 'Market' },
-  workshop: { x: 1152, y: 360, label: 'Workshop' },
-  tavern: { x: 1088, y: 610, label: 'Tavern' }
+  farm: { x: 220, y: 620, label: 'Farm' },
+  chapel: { x: 560, y: 220, label: 'Chapel' },
+  town_hall: { x: 720, y: 280, label: 'Town Hall' },
+  market: { x: 480, y: 420, label: 'Market' },
+  workshop: { x: 1180, y: 420, label: 'Workshop' },
+  tavern: { x: 820, y: 480, label: 'Tavern' }
 };
 const LANDMARKS = [
-  { x: 1312, y: 160, label: 'Clinic' },
-  { x: 768, y: 430, label: 'Park' },
-  { x: 352, y: 640, label: 'Bank' },
-  { x: 1280, y: 700, label: 'Homes' }
+  { x: 980, y: 200, label: 'Park' },
+  { x: 900, y: 380, label: 'Clinic' },
+  { x: 700, y: 430, label: 'Bank' },
+  { x: 300, y: 380, label: 'Homes' }
 ];
 const timelineEvents = [];
-let showGraph = false;
 let extraTab = 'profile';
 
 function locOf(name) {
   return VISUAL[name] || LOCS[name] || { x: 800, y: 450 };
 }
 
+function drawBaseLayers(svg) {
+  const terrain = svgEl('g', { id: 'terrainLayer' });
+  [[800, 200, 520, 140], [400, 160, 280, 90], [1200, 180, 300, 100], [300, 700, 360, 120]].forEach(([cx, cy, rx, ry]) => {
+    terrain.appendChild(svgEl('ellipse', {
+      cx, cy, rx, ry, fill: 'none', stroke: '#5c6b55', 'stroke-width': 1.2, opacity: 0.55
+    }));
+  });
+  svg.appendChild(terrain);
+
+  const water = svgEl('g', { id: 'waterLayer' });
+  water.appendChild(svgEl('path', {
+    d: 'M40 520 C 280 500, 420 560, 640 540 S 980 500, 1280 560 S 1500 620, 1600 600',
+    fill: 'none', stroke: '#6a8aa3', 'stroke-width': 18, opacity: 0.55
+  }));
+  water.appendChild(svgEl('path', {
+    d: 'M620 530 C 700 500, 760 500, 820 520',
+    fill: 'none', stroke: '#8aa0b0', 'stroke-width': 8, opacity: 0.8
+  }));
+  svg.appendChild(water);
+
+  const land = svgEl('g', { id: 'landuseLayer' });
+  land.appendChild(svgEl('ellipse', { cx: 220, cy: 640, rx: 160, ry: 90, fill: '#8a7a4b', opacity: 0.22 }));
+  land.appendChild(svgEl('ellipse', { cx: 720, cy: 280, rx: 90, ry: 60, fill: '#d7c7a8', opacity: 0.28 }));
+  land.appendChild(svgEl('ellipse', { cx: 500, cy: 430, rx: 110, ry: 70, fill: '#9a5a48', opacity: 0.2 }));
+  land.appendChild(svgEl('ellipse', { cx: 300, cy: 380, rx: 90, ry: 60, fill: '#e8ddd0', opacity: 0.2 }));
+  land.appendChild(svgEl('ellipse', { cx: 980, cy: 220, rx: 120, ry: 70, fill: '#8fa57a', opacity: 0.22 }));
+  land.appendChild(svgEl('ellipse', { cx: 900, cy: 380, rx: 70, ry: 46, fill: '#7a8a9a', opacity: 0.22 }));
+  svg.appendChild(land);
+
+  const roads = svgEl('g', { id: 'mobilityLayer' });
+  roads.appendChild(svgEl('path', {
+    d: 'M180 640 C 360 520, 420 460, 500 430 S 680 360, 720 300 S 900 260, 1100 400',
+    fill: 'none', stroke: '#c4b8a8', 'stroke-width': 7, opacity: 0.85
+  }));
+  roads.appendChild(svgEl('path', {
+    d: 'M300 380 C 400 400, 460 410, 500 430 S 700 460, 820 480 S 1000 450, 1180 420',
+    fill: 'none', stroke: '#b7b0a4', 'stroke-width': 4, opacity: 0.7
+  }));
+  roads.appendChild(svgEl('path', {
+    d: 'M560 220 C 620 240, 680 260, 720 280',
+    fill: 'none', stroke: '#d7c7a8', 'stroke-width': 3, opacity: 0.75
+  }));
+  svg.appendChild(roads);
+}
+
 function drawStaticTown() {
   const svg = document.getElementById('mapSvg');
   svg.innerHTML = '';
-  const defs = svgEl('defs', {});
-  defs.innerHTML = '<filter id="glow"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
-  svg.appendChild(defs);
+  drawBaseLayers(svg);
+  const labels = svgEl('g', { id: 'labelLayer' });
   Object.entries(VISUAL).forEach(([key, loc]) => {
     const t = svgEl('text', {
-      x: loc.x, y: loc.y - 36, 'text-anchor': 'middle', fill: '#e8edf7',
-      'font-size': 15, 'font-weight': 700, filter: 'url(#glow)'
+      x: loc.x, y: loc.y - 28, 'text-anchor': 'middle', fill: '#2a3128',
+      'font-size': 13, 'font-weight': 700
     });
     t.textContent = loc.label;
-    svg.appendChild(t);
+    labels.appendChild(t);
   });
   LANDMARKS.forEach(loc => {
     const t = svgEl('text', {
-      x: loc.x, y: loc.y - 28, 'text-anchor': 'middle', fill: '#c5cde0',
-      'font-size': 13, 'font-weight': 600, opacity: 0.9
+      x: loc.x, y: loc.y - 22, 'text-anchor': 'middle', fill: '#3a4338',
+      'font-size': 12, 'font-weight': 600
     });
     t.textContent = loc.label;
-    svg.appendChild(t);
+    labels.appendChild(t);
   });
+  svg.appendChild(labels);
+  svg.appendChild(svgEl('g', { id: 'crossLayer' }));
   svg.appendChild(svgEl('g', { id: 'graphLayer' }));
   svg.appendChild(svgEl('g', { id: 'agentLayer' }));
+  applyMapChrome();
+}
+
+function applyMapChrome() {
+  const wrap = document.getElementById('townWrap');
+  wrap.className = 'view-' + mapView;
+  const set = (id, on) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = on ? '' : 'none';
+  };
+  const showTerrain = mapLayers.terrain || mapView === 'topography';
+  const showWater = mapLayers.water || mapView === 'topography';
+  const showLand = mapView === 'landuse';
+  const showRoads = mapView === 'mobility';
+  set('terrainLayer', showTerrain);
+  set('waterLayer', showWater);
+  set('landuseLayer', showLand);
+  set('mobilityLayer', showRoads);
+  if (latestFrame) updateTown(latestFrame);
 }
 
 function layoutCluster(n, loc) {
   if (n <= 0) return [];
-  if (n === 1) return [{ x: loc.x, y: loc.y + 28 }];
+  if (n === 1) return [{ x: loc.x, y: loc.y + 22 }];
   const cols = Math.min(4, Math.ceil(Math.sqrt(n)));
-  const gapX = 28, gapY = 34;
+  const gapX = 26, gapY = 30;
   const startX = loc.x - ((cols - 1) * gapX) / 2;
-  const startY = loc.y + 18;
+  const startY = loc.y + 14;
   const out = [];
   for (let i = 0; i < n; i++) out.push({ x: startX + (i % cols) * gapX, y: startY + Math.floor(i / cols) * gapY });
   return out;
@@ -210,23 +319,23 @@ function drawAgentToken(id, cx, cy, factionId, factionLabel) {
   const color = agentColor(id);
   const isLLM = LLM_IDS.includes(id);
   const grp = svgEl('g', { transform: 'translate(' + cx + ',' + cy + ')', class: 'hit' });
-  grp.appendChild(svgEl('ellipse', { cx: 0, cy: 12, rx: 8, ry: 2.4, fill: '#000', opacity: 0.45 }));
-  if (factionId) {
-    grp.appendChild(svgEl('circle', { cx: 0, cy: 0, r: 12, fill: 'none', stroke: factionColor(factionId), 'stroke-width': 2.4 }));
+  grp.appendChild(svgEl('ellipse', { cx: 0, cy: 10, rx: 7, ry: 2, fill: '#000', opacity: 0.28 }));
+  if (mapLayers.factions && factionId) {
+    grp.appendChild(svgEl('circle', { cx: 0, cy: 0, r: 11, fill: 'none', stroke: factionColor(factionId), 'stroke-width': 2 }));
   }
   const expelled = latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].expelled;
   const muted = expelled || (latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].can_vote === false);
   grp.appendChild(svgEl('circle', {
-    cx: 0, cy: -1, r: 8, fill: color,
-    stroke: expelled ? '#ef5b5b' : (isLLM ? '#e8c36a' : '#061018'),
-    'stroke-width': expelled ? 2.4 : (isLLM ? 2 : 1),
-    opacity: muted ? 0.55 : 1
+    cx: 0, cy: -1, r: 7.5, fill: color,
+    stroke: expelled ? '#ef5b5b' : (isLLM ? '#c4a35a' : FAITH_COLOR[faithOf(id, latestFrame)] || '#2a3128'),
+    'stroke-width': 2,
+    opacity: muted ? 0.5 : 1
   }));
-  const label = svgEl('text', { x: 0, y: 22, 'text-anchor': 'middle', 'font-size': 9, fill: '#d7deee' });
+  const label = svgEl('text', { x: 0, y: 20, 'text-anchor': 'middle', 'font-size': 9, fill: '#243028' });
   label.textContent = nameOf(id).split(' ')[0];
   grp.appendChild(label);
   const title = svgEl('title', {});
-  title.textContent = nameOf(id) + (factionLabel ? ' · ' + factionLabel : '') + (isLLM ? ' · LLM' : '');
+  title.textContent = nameOf(id) + ' · ' + faithLabel(id, latestFrame) + (factionLabel ? ' · ' + factionLabel : '');
   grp.appendChild(title);
   return grp;
 }
@@ -234,25 +343,36 @@ function drawAgentToken(id, cx, cy, factionId, factionLabel) {
 function updateTown(frame) {
   const g = document.getElementById('agentLayer');
   const net = document.getElementById('graphLayer');
+  const cross = document.getElementById('crossLayer');
   if (!g) return;
   g.innerHTML = '';
   net.innerHTML = '';
+  if (cross) cross.innerHTML = '';
   const pos = {};
   const byLoc = {};
   Object.keys(VISUAL).forEach(k => byLoc[k] = []);
   Object.entries(frame.agents).forEach(([id, st]) => { (byLoc[st.location] = byLoc[st.location] || []).push(id); });
-  Object.entries(byLoc).forEach(([key, list]) => {
-    const loc = locOf(key);
-    const spots = layoutCluster(list.length, loc);
-    list.forEach((id, i) => {
-      const factionId = (frame.factions || {})[id];
-      pos[id] = spots[i];
-      const token = drawAgentToken(id, spots[i].x, spots[i].y, factionId, factionId ? factionName(factionId, frame) : null);
-      token.addEventListener('click', () => selectAgent(id));
-      g.appendChild(token);
+  if (mapLayers.residents) {
+    Object.entries(byLoc).forEach(([key, list]) => {
+      const loc = locOf(key);
+      const spots = layoutCluster(list.length, loc);
+      list.forEach((id, i) => {
+        const factionId = (frame.factions || {})[id];
+        pos[id] = spots[i];
+        const token = drawAgentToken(id, spots[i].x, spots[i].y, factionId, factionId ? factionName(factionId, frame) : null);
+        token.addEventListener('click', () => selectAgent(id));
+        g.appendChild(token);
+      });
     });
-  });
-  if (showGraph) {
+  } else {
+    Object.entries(byLoc).forEach(([key, list]) => {
+      const loc = locOf(key);
+      const spots = layoutCluster(list.length, loc);
+      list.forEach((id, i) => { pos[id] = spots[i]; });
+    });
+  }
+  const showRel = mapLayers.relationships || mapView === 'social';
+  if (showRel) {
     (frame.relationship_edges || []).forEach(([a, b, w]) => {
       if (!pos[a] || !pos[b]) return;
       net.appendChild(svgEl('line', {
@@ -262,13 +382,16 @@ function updateTown(frame) {
         opacity: 0.55
       }));
     });
-    commWindow.forEach(e => {
-      if (!pos[e.a] || !pos[e.b]) return;
-      net.appendChild(svgEl('line', {
-        x1: pos[e.a].x, y1: pos[e.a].y, x2: pos[e.b].x, y2: pos[e.b].y,
-        stroke: '#e8c36a', 'stroke-width': 0.8, opacity: 0.35, 'stroke-dasharray': '3 3'
+  }
+  if (mapLayers.crossings && cross) {
+    ((frame.metrics || {}).crossings || []).forEach((c, i) => {
+      cross.appendChild(svgEl('circle', {
+        cx: 720 + i * 18, cy: 300, r: 6, fill: '#f0a14a', opacity: 0.85
       }));
     });
+  }
+  if (mapLayers.anomalies && ((frame.metrics || {}).anomaly_flags || []).length && cross) {
+    cross.appendChild(svgEl('circle', { cx: 760, cy: 260, r: 10, fill: 'none', stroke: '#ef5b5b', 'stroke-width': 2 }));
   }
   placeFloats(frame, pos);
 }
@@ -341,7 +464,10 @@ function updateInspector(id, frame) {
   document.getElementById('inspName').textContent = nameOf(id);
   document.getElementById('inspMeta').textContent =
     'Age ' + (24 + (parseInt(id.split('_')[1], 10) || 0)) + ' · ' + roleOf(id) +
+    ' · ' + String(st.location || '').replace('_', ' ') +
     (fid ? ' · ' + factionName(fid, frame) : ' · unaffiliated');
+  document.getElementById('inspFaith').textContent =
+    faithLabel(id, frame) + (st.piety != null ? ' · piety ' + Math.round(st.piety * 100) + '%' : '');
   const face = document.getElementById('inspFace');
   face.style.background = agentColor(id);
   face.textContent = initials(id);
@@ -352,13 +478,18 @@ function updateInspector(id, frame) {
     const val = rec.validation || {};
     document.getElementById('trace').innerHTML =
       row('Perceived', escapeHtml(perc.location || st.location) + ' · problems: ' + escapeHtml((perc.problems || []).join(', ') || 'none')) +
-      row('Remembered', (rec.retrieved_memories || []).map(escapeHtml).join('<br>') || 'none') +
+      row('Remembered', filterMemories(rec.retrieved_memories || []).map(escapeHtml).join('<br>') || 'none in this filter') +
       row('Considered', consideredBars(rec.considered_actions || [])) +
       row('Chose', escapeHtml((rec.chosen_intent || {}).action || '') + ' ' + escapeHtml(JSON.stringify((rec.chosen_intent || {}).args || {}))) +
       row('Validated', (val.ok ? 'Legal' : 'Rejected') + ' — ' + escapeHtml(val.reason || '')) +
       row('Consequence', (rec.consequences || []).map(escapeHtml).join('; ') || 'none');
   }
   renderExtra(id, frame);
+}
+
+function filterMemories(list) {
+  if (memFilter === 'all') return list;
+  return list.filter(t => classifyMemory(t) === memFilter);
 }
 
 function row(label, body) {
@@ -370,8 +501,10 @@ function renderExtra(id, frame) {
   const a = AGENTS[id] || {};
   const box = document.getElementById('inspExtra');
   if (extraTab === 'profile') {
-    box.innerHTML = (st.location || '').replace('_', ' ') + ' · brain ' + escapeHtml(a.decider_kind || 'rule') +
-      (LLM_IDS.includes(id) ? ' (LLM)' : '');
+    box.innerHTML = (st.location || '').replace('_', ' ') + ' · ' + escapeHtml(faithLabel(id, frame)) +
+      ' · brain ' + escapeHtml(a.decider_kind || 'rule') +
+      (LLM_IDS.includes(id) ? ' (LLM)' : '') +
+      (st.can_vote === false ? ' · no vote' : '');
   } else if (extraTab === 'rel') {
     const edges = (frame.relationship_edges || []).filter(e => e[0] === id || e[1] === id);
     box.innerHTML = edges.length
@@ -387,7 +520,9 @@ function renderExtra(id, frame) {
       k.replace(/_/g, ' ') + ' · ' + Number(v).toFixed(2)).join('<br>') || 'unknown';
   } else {
     const rec = (frame.decision_records || []).find(r => r.agent_id === id);
-    box.innerHTML = ((rec && rec.retrieved_memories) || []).map(escapeHtml).join('<br>') || 'no memories retrieved';
+    const pool = (st.memories && st.memories.length) ? st.memories : ((rec && rec.retrieved_memories) || []);
+    const shown = filterMemories(pool);
+    box.innerHTML = shown.map(escapeHtml).join('<br>') || 'no memories in this filter';
   }
 }
 
@@ -398,8 +533,7 @@ function updateProposal(frame) {
   const p = props[0];
   const votes = Object.entries(p.votes || {});
   const yes = votes.filter(([, v]) => v === 'yes');
-  const no = votes.filter(([, v]) => v === 'no');
-  const abs = votes.filter(([, v]) => v !== 'yes' && v !== 'no');
+  const no = votes.filter(([, v]) => v !== 'yes' && v === 'no');
   const rules = p.vote_rules || {};
   const eligible = p.eligible || Object.keys(frame.agents).length || 1;
   const need = p.quorum_needed || Math.ceil((rules.quorum || 0.4) * eligible);
@@ -474,6 +608,7 @@ function renderPeople(frame) {
     const fid = (frame.factions || {})[id];
     return '<div class="person" data-id="' + id + '"><div class="avatar" style="background:' + agentColor(id) +
       '"></div><div><b>' + escapeHtml(nameOf(id)) + '</b><div class="tiny">' + roleOf(id) +
+      ' · ' + escapeHtml(faithLabel(id, frame)) +
       (fid ? ' · ' + escapeHtml(factionName(fid, frame)) : '') +
       (id === frame.town_leader_id ? ' · leader' : '') +
       (frame.agents[id].expelled ? ' · expelled' : (frame.agents[id].can_vote === false ? ' · no vote' : '')) +
@@ -511,6 +646,32 @@ document.querySelectorAll('.tab').forEach(tab => {
     if (selectedId && latestFrame) renderExtra(selectedId, latestFrame);
   });
 });
+document.querySelectorAll('#memFilter input').forEach(inp => {
+  inp.addEventListener('change', () => {
+    memFilter = inp.value;
+    document.querySelectorAll('#memFilter label').forEach(lab => {
+      lab.classList.toggle('on', lab.querySelector('input').value === memFilter);
+    });
+    if (selectedId && latestFrame) updateInspector(selectedId, latestFrame);
+  });
+});
+document.querySelectorAll('#layerMenu [data-layer]').forEach(inp => {
+  inp.addEventListener('change', (ev) => {
+    ev.stopPropagation();
+    mapLayers[inp.dataset.layer] = inp.checked;
+    applyMapChrome();
+  });
+  inp.addEventListener('click', (ev) => ev.stopPropagation());
+});
+document.querySelectorAll('#viewMenu [data-view]').forEach(row => {
+  row.addEventListener('click', () => {
+    mapView = row.dataset.view;
+    document.querySelectorAll('#viewMenu .menu-row').forEach(r => r.classList.toggle('is-on', r === row));
+    document.getElementById('viewTrigger').textContent = 'View · ' + row.textContent.trim();
+    applyMapChrome();
+    closeMenus();
+  });
+});
 document.getElementById('navPeople').addEventListener('click', (ev) => {
   ev.preventDefault();
   const drawer = document.getElementById('peopleDrawer');
@@ -518,26 +679,27 @@ document.getElementById('navPeople').addEventListener('click', (ev) => {
 });
 document.getElementById('navRel').addEventListener('click', (ev) => {
   ev.preventDefault();
-  showGraph = !showGraph;
-  ev.currentTarget.classList.toggle('active', showGraph);
-  if (latestFrame) updateTown(latestFrame);
+  mapLayers.relationships = !mapLayers.relationships;
+  const box = document.querySelector('#layerMenu [data-layer="relationships"]');
+  if (box) box.checked = mapLayers.relationships;
+  ev.currentTarget.classList.toggle('active', mapLayers.relationships);
+  applyMapChrome();
 });
 document.getElementById('navPol').addEventListener('click', (ev) => {
   ev.preventDefault();
   document.getElementById('proposalCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  document.getElementById('proposalCard').style.boxShadow = '0 0 0 1px #2ec4b6';
-  setTimeout(() => { document.getElementById('proposalCard').style.boxShadow = ''; }, 1200);
 });
 document.getElementById('navFor').addEventListener('click', (ev) => {
   ev.preventDefault();
-  document.getElementById('forensicCard').style.boxShadow = '0 0 0 1px #2ec4b6';
-  setTimeout(() => { document.getElementById('forensicCard').style.boxShadow = ''; }, 1200);
+  extraTab = 'mem';
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.tab === 'mem'));
+  if (selectedId && latestFrame) renderExtra(selectedId, latestFrame);
 });
 document.getElementById('navExp').addEventListener('click', (ev) => {
   ev.preventDefault();
-  document.getElementById('dock').style.outline = '1px solid #2ec4b6';
-  setTimeout(() => { document.getElementById('dock').style.outline = ''; }, 1200);
+  document.getElementById('moreMenu').querySelector('.menu-trigger').click();
 });
+document.getElementById('forkSim').addEventListener('click', () => { markFork(); closeMenus(); });
 document.addEventListener('click', (ev) => {
   if (!ev.target.closest('#injectWrap')) {
     const menu = document.getElementById('injectMenu');

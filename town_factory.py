@@ -13,9 +13,10 @@ import random
 
 from agent import Agent, Persona
 from decision import RuleBasedDecider
+from faith import assign_faith
 from world import Location, World
 
-LOCATIONS = ["farm", "workshop", "market", "town_hall", "tavern"]
+LOCATIONS = ["farm", "workshop", "market", "town_hall", "tavern", "chapel"]
 
 FIRST_NAMES = [
     "Marcus Hale", "Lena Voss", "Tomas Reed", "Aria Cho", "Boris Klein",
@@ -47,6 +48,7 @@ def build_world() -> World:
         Location("market", resources={}),
         Location("town_hall", resources={}),
         Location("tavern", resources={}),
+        Location("chapel", resources={}),
     ])
 
 
@@ -62,6 +64,7 @@ def build_agents(rng: random.Random, num_agents: int) -> dict:
     agents = {}
     for i in range(num_agents):
         agent_id = f"agent_{i:02d}"
+        faith_id, piety = assign_faith(i, rng)
         persona = Persona(
             name=FIRST_NAMES[i % len(FIRST_NAMES)],
             industriousness=rng.random(),
@@ -69,6 +72,8 @@ def build_agents(rng: random.Random, num_agents: int) -> dict:
             sociability=rng.random(),
             rule_respect=rng.random(),
             risk_tolerance=rng.random(),
+            faith=faith_id,
+            piety=piety,
         )
         agent = Agent(
             agent_id=agent_id,
@@ -100,6 +105,7 @@ def spawn_newcomer(rng: random.Random, agents: dict, world, replacing: str | Non
     used_names = {a.persona.name for a in agents.values()}
     pool = [n for n in NEWCOMER_NAMES if n not in used_names] or NEWCOMER_NAMES
     agent_id = next_agent_id(agents)
+    faith_id, piety = assign_faith(len(agents), rng)
     persona = Persona(
         name=rng.choice(pool),
         industriousness=rng.random(),
@@ -107,6 +113,8 @@ def spawn_newcomer(rng: random.Random, agents: dict, world, replacing: str | Non
         sociability=max(0.35, rng.random()),
         rule_respect=rng.random(),
         risk_tolerance=rng.random(),
+        faith=faith_id,
+        piety=piety,
     )
     agent = Agent(
         agent_id=agent_id,

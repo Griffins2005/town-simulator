@@ -10,6 +10,29 @@ const metricsHistory = [];
 const forkMarks = [];
 let prevTreasury = null;
 let speedDelay = 0.6;
+const SPEED_PRESETS = [
+  { label: '0.25×', delay: 2.4 },
+  { label: '0.5×', delay: 1.2 },
+  { label: '1×', delay: 0.6 },
+  { label: '2×', delay: 0.3 },
+  { label: '4×', delay: 0.15 },
+];
+const FAITH_NAME = {
+  vale_covenant: 'Vale Covenant', hall_creed: 'Hall Creed',
+  old_ways: 'Old Ways', unaffiliated: 'Unaffiliated'
+};
+const FAITH_COLOR = {
+  vale_covenant: '#6b8f71', hall_creed: '#c4b59a',
+  old_ways: '#8a7a4b', unaffiliated: '#7a8194'
+};
+let mapView = 'town';
+const mapLayers = {
+  residents: true, relationships: false, factions: true,
+  crossings: false, anomalies: false, terrain: false, water: true
+};
+let memFilter = 'all';
+const frameArchive = [];
+let openMenu = null;
 
 function agentColor(id) {
   const idx = parseInt(String(id).split('_')[1], 10);
@@ -36,6 +59,23 @@ function factionName(factionId, frame) {
 }
 function initials(id) {
   return nameOf(id).split(/\s+/).map(p => p[0]).join('').slice(0, 2);
+}
+function faithOf(id, frame) {
+  const st = (frame && frame.agents && frame.agents[id]) || {};
+  const a = AGENTS[id] || {};
+  return st.faith || a.faith || 'unaffiliated';
+}
+function faithLabel(id, frame) {
+  const a = AGENTS[id] || {};
+  return a.faith_name || FAITH_NAME[faithOf(id, frame)] || 'Unaffiliated';
+}
+function classifyMemory(text) {
+  const t = String(text || '').toLowerCase();
+  if (/invent|pump|adopt|workshop|catalog/.test(t)) return 'inventions';
+  if (/vote|proposal|lobby|faction|curfew|repeal|expel|suspend|rule_|welcome|deadlock/.test(t)) return 'political';
+  if (/trade|money|food|work|demurrage|tax|bank/.test(t)) return 'economic';
+  if (/gossip|speak|chapel|faith|piety|heard_|relationship|welcome/.test(t)) return 'social';
+  return 'social';
 }
 function roleOf(id) {
   const t = (AGENTS[id] && AGENTS[id].traits) || {};
@@ -265,11 +305,93 @@ async function cycleSpeed() {
   const lab = document.getElementById('speedBtn');
   if (lab) lab.textContent = 'speed ' + labels[i];
 }
+async function setSpeed(delay, label) {
+  speedDelay = delay;
+  await sendControl({ cmd: 'speed', delay });
+  const lab = document.getElementById('speedTrigger');
+  if (lab) lab.textContent = label;
+  document.querySelectorAll('#speedMenu .menu-row').forEach(row => {
+    row.classList.toggle('is-on', Number(row.dataset.delay) === delay);
+  });
+}
+function closeMenus() {
+  document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+  if (openMenu) {
+    const trig = openMenu.querySelector('.menu-trigger');
+    if (trig) trig.setAttribute('aria-expanded', 'false');
+  }
+  openMenu = null;
+}
+function placeMenu(menu) {
+  const pop = menu.querySelector('.menu-pop');
+  const trig = menu.querySelector('.menu-trigger');
+  if (!pop || !trig) return;
+  menu.classList.remove('up');
+  const rect = trig.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const need = pop.offsetHeight || 180;
+  if (menu.dataset.up === '1' || spaceBelow < need + 12) menu.classList.add('up');
+}
+function bindMenu(menu) {
+  const trig = menu.querySelector('.menu-trigger');
+  const pop = menu.querySelector('.menu-pop');
+  if (!trig || !pop) return;
+  trig.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const was = menu.classList.contains('open');
+    closeMenus();
+    if (!was) {
+      menu.classList.add('open');
+      trig.setAttribute('aria-expanded', 'true');
+      openMenu = menu;
+      placeMenu(menu);
+      const first = pop.querySelector('.menu-row');
+      if (first) first.focus();
+    } else {
+      trig.focus();
+    }
+  });
+  pop.querySelectorAll('.menu-row').forEach((row, idx, rows) => {
+    row.tabIndex = 0;
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); rows[(idx + 1) % rows.length].focus(); }
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); rows[(idx - 1 + rows.length) % rows.length].focus(); }
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); row.click(); }
+      if (ev.key === 'Escape') { closeMenus(); trig.focus(); }
+    });
+  });
+}
 function bindSharedControls() {
   const pause = document.getElementById('pauseBtn');
   if (pause) pause.addEventListener('click', togglePause);
   const speed = document.getElementById('speedBtn');
-  if (speed) speed.addEventListener('click', cycleSpeed);
+  if (speed && !document.getElementById('speedMenu')) speed.addEventListener('click', cycleSpeed);
+  document.querySelectorAll('.menu').forEach(bindMenu);
+  document.addEventListener('click', (ev) => {
+    if (!ev.target.closest('.menu')) closeMenus();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && openMenu) {
+      const trig = openMenu.querySelector('.menu-trigger');
+      closeMenus();
+      if (trig) trig.focus();
+    }
+  });
+  document.querySelectorAll('#speedMenu .menu-row').forEach(row => {
+    row.addEventListener('click', async () => {
+      await setSpeed(Number(row.dataset.delay), row.dataset.label);
+      closeMenus();
+    });
+  });
+  const exp = document.getElementById('exportTrace');
+  if (exp) exp.addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify({ frames: frameArchive.slice(-120) }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'eidolon-trace.json';
+    a.click();
+    closeMenus();
+  });
   const inj = document.getElementById('injectBtn');
   if (inj) inj.addEventListener('click', () => {
     const menu = document.getElementById('injectMenu');
@@ -307,6 +429,8 @@ function connectStream(onFrame) {
       }
     });
     if (status) status.textContent = paused ? 'paused' : 'live';
+    frameArchive.push(d.frame);
+    if (frameArchive.length > 240) frameArchive.shift();
     onFrame(d.frame);
   });
   es.onerror = () => { if (status) status.textContent = 'retrying'; };
