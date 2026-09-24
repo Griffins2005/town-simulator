@@ -93,7 +93,8 @@ MODEL = "openai/gpt-oss-120b"
 # the whole action-execution stack just to know action NAMES).
 _VALID_ACTIONS = [
     "move", "work", "trade_offer", "trade_accept", "trade_reject",
-    "speak", "gossip", "propose_rule", "vote", "lobby", "invent", "adopt_invention", "idle",
+    "speak", "gossip", "propose_rule", "vote", "lobby", "invent", "adopt_invention",
+    "worship", "convert", "idle",
 ]
 
 _INTENT_SCHEMA = {
@@ -126,13 +127,14 @@ _INTENT_SCHEMA = {
         "want_item": {"type": ["string", "null"], "description": "item name wanted in return, e.g. money"},
         "want_amount": {"type": ["number", "null"], "description": "quantity of want_item for trade_offer"},
         "about": {"type": ["string", "null"], "description": "agent_id for gossip"},
-        "rule_type": {"type": ["string", "null"], "enum": ["curfew", "wealth_tax", "repeal", "expel", "suspend_vote", "welcome", None], "description": "for propose_rule"},
+        "rule_type": {"type": ["string", "null"], "enum": ["curfew", "wealth_tax", "repeal", "expel", "suspend_vote", "welcome", "festival", "water_blessing", "impeach", "elect", None], "description": "for propose_rule"},
+        "convert_faith": {"type": ["string", "null"], "enum": ["vale_covenant", "hall_creed", "old_ways", None], "description": "for convert: the congregation receiving you"},
         "rule_after_tick_of_day": {"type": ["integer", "null"], "description": "for propose_rule curfew"},
         "rule_period": {"type": ["integer", "null"], "description": "for propose_rule curfew or wealth_tax"},
         "rule_tax_rate": {"type": ["number", "null"], "description": "for propose_rule wealth_tax, 0-1"},
         "rule_tax_threshold": {"type": ["number", "null"], "description": "for propose_rule wealth_tax"},
         "rule_target_proposal_id": {"type": ["integer", "null"], "description": "for propose_rule repeal: proposal_id of the enacted rule to remove"},
-        "rule_target_agent_id": {"type": ["string", "null"], "description": "for propose_rule expel/suspend_vote/welcome"},
+        "rule_target_agent_id": {"type": ["string", "null"], "description": "for propose_rule expel/suspend_vote/welcome/impeach/elect"},
         "proposal_id": {"type": ["integer", "null"], "description": "for vote or lobby"},
         "vote_choice": {"type": ["string", "null"], "enum": ["yes", "no", None], "description": "for vote, or lobby lean"},
         "invention_kind": {"type": ["string", "null"], "description": "catalog kind for invent, e.g. water_pump"},
@@ -147,7 +149,8 @@ _INTENT_SCHEMA = {
         "action", "destination", "to", "offer_id", "give_item", "give_amount",
         "want_item", "want_amount", "about", "rule_type", "rule_after_tick_of_day",
         "rule_period", "rule_tax_rate", "rule_tax_threshold", "rule_target_proposal_id",
-        "rule_target_agent_id", "proposal_id", "vote_choice", "invention_kind", "invention_id", "say", "reasoning",
+        "rule_target_agent_id", "proposal_id", "vote_choice", "invention_kind", "invention_id",
+        "convert_faith", "say", "reasoning",
     ],
     "additionalProperties": False,
 }
@@ -166,15 +169,24 @@ Valid actions and which fields each one uses (all others should be null):
 - trade_accept / trade_reject: offer_id
 - speak: to, optionally say
 - gossip: about, optionally to, optionally say (make it specific: scandal, expulsion, welcome)
-- propose_rule: rule_type ("curfew", "wealth_tax", "repeal", "expel", "suspend_vote", or "welcome").
+- propose_rule: rule_type ("curfew", "wealth_tax", "repeal", "expel", "suspend_vote",
+  "welcome", "festival", "water_blessing", "impeach", or "elect").
   curfew: rule_after_tick_of_day + rule_period; wealth_tax: rule_tax_rate +
   rule_tax_threshold + rule_period; repeal: rule_target_proposal_id;
-  expel/suspend_vote/welcome: rule_target_agent_id
+  expel/suspend_vote/welcome/impeach/elect: rule_target_agent_id; festival and
+  water_blessing need no extra fields (the engine binds festival to YOUR faith).
+  impeach only during a crisis, if the sitting lead is ruined, or if their
+  reputation has collapsed. elect only when the chair is vacant; you cannot
+  elect a bankrupt resident. A bankrupt sitting leader steps down without a vote.
 - vote: proposal_id, vote_choice ("yes" or "no") — only if you have voting rights
 - lobby: to (one agent here), proposal_id, vote_choice as the lean you want from them.
   Use this on deadlock, as town leader, or in a crisis. Convince people one by one.
 - invent: invention_kind (must be a catalog kind from Perception, e.g. water_pump)
 - adopt_invention: invention_id
+- worship: no extra fields. Only at your faith home while the service is in session
+  (or during your congregation's festival).
+- convert: convert_faith. Only if you are unaffiliated or your piety has fallen
+  below 0.22, only at a living service with at least two members present.
 - idle: (no fields needed)
 
 Stay in character based on your traits and recent memories. Be concise. \
@@ -182,6 +194,9 @@ Do NOT choose idle unless every other action is impossible. Idle is a last resor
 You walk ONE street per tick. Name a destination; the engine walks the next \
 open street toward it. You cannot teleport. A flood can close the bridge and \
 greenways — then those places drop off your reachable list.
+Religion is a civic institution, not doctrine you invent. You cannot author \
+beliefs, rites, or scripture. Worship, convert, festival, and water_blessing \
+are the only faith actions; the engine validates them. \
 If the town is in a crisis (famine, unrest, bank_run, flood), you MUST act: move to the \
 farm and work, go to town_hall or the park and propose or vote, leave flooded \
 ground, invent a catalog tool, speak or gossip to organize neighbors. Fight \
@@ -204,8 +219,22 @@ def _build_user_prompt(perception):
         f"Your traits (0-1 scale): industriousness={p.self_industriousness:.2f}, "
         f"generosity={p.self_generosity:.2f}, sociability={p.self_sociability:.2f}, "
         f"rule_respect={p.self_rule_respect:.2f}, risk_tolerance={p.self_risk_tolerance:.2f}.",
+        f"Your livelihood: {getattr(p, 'self_livelihood_name', 'Laborer')} "
+        f"(solvency {getattr(p, 'self_solvency', 'ok')}). "
+        f"Flood and famine hit farmers hardest; a bank run hits traders; unrest hits laborers. "
+        f"Bankruptcy does not take your vote — civic ballot {getattr(p, 'can_vote_civic', True)}, "
+        f"economy ballot {getattr(p, 'can_vote_economy', True)}.",
+        f"Crisis exposure this tick: {getattr(p, 'crisis_exposure', {})}.",
         f"Your faith: {getattr(p, 'self_faith_name', 'Unaffiliated')} "
-        f"(piety {getattr(p, 'self_piety', 0):.2f}). Same-faith neighbors are easier to lobby.",
+        f"(piety {getattr(p, 'self_piety', 0):.2f}). Home: {getattr(p, 'faith_home', None)}. "
+        f"Worship in session for you: {getattr(p, 'worship_now', False)}. "
+        f"Congregation size {getattr(p, 'congregation_size', 0)}, "
+        f"{getattr(p, 'congregation_here', 0)} of yours here.",
+        f"Service in this room: {getattr(p, 'session_faith', None)} "
+        f"({getattr(p, 'session_present', 0)} members present). "
+        f"Census: {getattr(p, 'faith_census', {})}. "
+        f"Festival: {getattr(p, 'festival_faith', None)}. "
+        f"Water blessing enacted: {getattr(p, 'water_blessing', False)}.",
         f"Other agents here: {p.location_agents}.",
         f"Resources available to work here: {p.location_resources}.",
         f"Streets you can walk this tick (one hop): {getattr(p, 'street_neighbors', [])}.",
@@ -252,10 +281,33 @@ def _build_user_prompt(perception):
         lines.append(f"Open governance proposals (quorum/pass/deadlock annotated): {p.open_proposals}.")
     if getattr(p, "can_vote", True) is False:
         lines.append("Your voting rights are suspended or you are expelled. You cannot vote or propose.")
-    if getattr(p, "is_leader", False):
+    if getattr(p, "office_vacant", False) or not getattr(p, "town_leader_id", None):
+        lines.append("The town-leader chair is VACANT. Propose elect naming rule_target_agent_id from succession candidates. A bankrupt name cannot take the chair.")
+        cands = getattr(p, "succession_candidates", None) or []
+        if cands:
+            lines.append("Succession candidates: " + ", ".join(
+                f"{c.get('name')} ({c.get('id')})" for c in cands
+            ) + ".")
+    elif getattr(p, "is_leader", False):
         lines.append(f"You are the town leader ({p.town_leader_name}). If a vote is deadlocked or the town is in crisis, lobby members one by one.")
+        if getattr(p, "self_solvency", "ok") == "bankrupt":
+            lines.append("You are bankrupt — the engine will sit you down; you do not keep the chair.")
     elif getattr(p, "town_leader_name", None):
-        lines.append(f"Town leader: {p.town_leader_name}.")
+        lines.append(f"Town leader: {p.town_leader_name} (solvency {getattr(p, 'leader_solvency', 'ok')}).")
+        if getattr(p, "impeach_justified", False):
+            lines.append("Impeach is in play: a crisis, a ruined lead, or collapsed reputation. Propose impeach with rule_target_agent_id set to the sitting leader.")
+    if getattr(p, "is_faith_leader", False):
+        lines.append(
+            f"You lead the {getattr(p, 'self_faith_name', 'congregation')}. "
+            "During service, go to your faith home and worship. "
+            "You may propose festival or water_blessing; you cannot invent doctrine."
+        )
+    elif getattr(p, "faith_leader_name", None):
+        lines.append(f"Your congregation's leader: {p.faith_leader_name}.")
+    if getattr(p, "congregation_leaders", None):
+        bits = [f"{row.get('faith_name')}: {row.get('name')}" for row in p.congregation_leaders]
+        if bits:
+            lines.append("Congregation leaders: " + "; ".join(bits) + ".")
     if getattr(p, "notorious", None):
         lines.append(f"Notorious residents (expel or suspend_vote): {p.notorious}.")
     if getattr(p, "newcomers", None):
@@ -667,11 +719,15 @@ class LLMDecider:
                 rule_args = {
                     "target_proposal_id": data.get("rule_target_proposal_id"),
                 }
-            elif rule_type in ("expel", "suspend_vote", "welcome"):
+            elif rule_type in ("expel", "suspend_vote", "welcome", "impeach", "elect"):
                 rule_args = {
                     "target_agent": data.get("rule_target_agent_id"),
                 }
+            elif rule_type in ("festival", "water_blessing"):
+                rule_args = {}
             return {"rule_type": rule_type, "rule_args": rule_args}
+        if action == "convert":
+            return {"faith": data.get("convert_faith")}
         if action == "vote":
             return {"proposal_id": data.get("proposal_id"), "choice": data.get("vote_choice")}
         if action == "lobby":

@@ -143,6 +143,12 @@ class World:
         # inventions.py after a legal invent action -- never by a Decider.
         self.inventions: list[dict] = []
 
+        # Sitting civic office. None means the chair is vacant and the
+        # town must elect. Seated and vacated only by governance.py.
+        self.town_leader_id: str | None = None
+        self.office_ever_vacated: bool = False
+        self.leader_seated_tick: int = 0
+
     def get_location(self, name: str) -> Location:
         """Look up a location by name.
 

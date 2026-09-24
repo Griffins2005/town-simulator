@@ -326,19 +326,27 @@ def inject_crisis(
                 farm.resources[resource_kind] = round(
                     farm.resources[resource_kind] * max(0.05, 1.0 - 0.85 * mag), 3
                 )
+        import economy
         for agent in agents.values():
+            exp = economy.exposure(agent, FAMINE_TAG)
             food = agent.inventory.get("food", 0.0)
             if food > 0:
-                agent.inventory["food"] = round(max(0.0, food * (1.0 - 0.35 * mag)), 2)
-        text = f"{label} famine — stores failing, people scramble for food"
+                agent.inventory["food"] = round(max(0.0, food * (1.0 - 0.35 * mag * exp)), 2)
+            if exp >= 0.6:
+                agent.money = round(max(0.0, agent.money * (1.0 - 0.12 * mag * exp)), 2)
+        text = f"{label} famine — stores failing, farmers and the hungry take the hit"
         loc_name = farm.name if farm else "farm"
         world.log_event("market_shock", location=loc_name, shock_kind="scarcity",
                         multiplier=round(1.0 - 0.85 * mag, 3), intensity=label)
     elif tag == UNREST_TAG:
+        import economy
         for agent in agents.values():
             agent.reputation = max(0.0, agent.reputation - 0.08 * mag)
+            exp = economy.exposure(agent, UNREST_TAG)
+            if exp >= 0.5:
+                agent.money = round(max(0.0, agent.money * (1.0 - 0.1 * mag * exp)), 2)
         world.treasury = max(0.0, round(world.treasury * (1.0 - 0.2 * mag), 2))
-        text = f"{label} unrest — streets tense, people demand a political answer"
+        text = f"{label} unrest — streets tense; laborers and the market take the loss"
     elif tag == FLOOD_TAG:
         farm = world.locations.get("farm")
         if farm and farm.resources and mag >= 0.5:
@@ -346,11 +354,23 @@ def inject_crisis(
                 farm.resources[resource_kind] = round(
                     farm.resources[resource_kind] * (1.0 - 0.18 * mag), 3
                 )
-        text = f"{label} flood — the river is up, the bridge and greenways close"
+        import economy
+        for agent in agents.values():
+            exp = economy.exposure(agent, FLOOD_TAG)
+            if exp >= 0.5:
+                agent.money = round(max(0.0, agent.money * (1.0 - 0.14 * mag * exp)), 2)
+                food = agent.inventory.get("food", 0.0)
+                if food > 0:
+                    agent.inventory["food"] = round(max(0.0, food * (1.0 - 0.2 * mag * exp)), 2)
+        text = f"{label} flood — the river is up; farmers and the wet ground take the loss"
     else:
+        import economy
         for agent in agents.values():
             agent.reputation = max(0.05, agent.reputation - 0.06 * mag)
-        text = f"{label} bank run — trust collapses, people hoard and refuse strangers"
+            exp = economy.exposure(agent, BANK_RUN_TAG)
+            if exp >= 0.45 and agent.money > 1:
+                agent.money = round(max(0.0, agent.money * (1.0 - 0.16 * mag * exp)), 2)
+        text = f"{label} bank run — traders and large balances are wiped first"
 
     world.active_crises.add(tag)
     world.crisis_intensity[tag] = mag
@@ -376,24 +396,12 @@ def tick_crises(world: World, agents: dict[str, Agent], rng: random.Random) -> N
                     farm.resources[resource_kind] = round(
                         farm.resources[resource_kind] * (1.0 - 0.04 * mag), 3
                     )
-            if rng.random() < 0.35 * mag:
-                hungry = [a for a in agents.values() if a.inventory.get("food", 0) > 0.2]
-                if hungry:
-                    victim = rng.choice(hungry)
-                    victim.inventory["food"] = round(
-                        max(0.0, victim.inventory["food"] - 0.25 * mag), 2
-                    )
         elif tag == UNREST_TAG:
             for agent in agents.values():
                 agent.reputation = max(0.0, agent.reputation - 0.01 * mag)
-        elif tag == BANK_RUN_TAG:
-            if rng.random() < 0.4 * mag:
-                for agent in agents.values():
-                    if agent.money > 1:
-                        agent.money = round(agent.money * (1.0 - 0.02 * mag), 2)
         elif tag == FLOOD_TAG:
-            # The streets stay closed via geography.blocked_kinds; here
-            # only the people still standing in the water feel it.
+            # Streets close via geography.blocked_kinds; money and food
+            # pressure is economy.apply_crisis_pressure (farmers first).
             for agent in agents.values():
                 if agent.location in ("farm", "park"):
                     agent.reputation = max(0.0, agent.reputation - 0.004 * mag)

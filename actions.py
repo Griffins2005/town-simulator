@@ -263,7 +263,7 @@ def _propose_rule(actor: Agent, intent: Intent, world: World, agents: dict[str, 
     rule_type = intent.args.get("rule_type")
     rule_args = intent.args.get("rule_args") or {}
     target_id = rule_args.get("target_agent") or rule_args.get("target_agent_id")
-    if rule_type in ("expel", "suspend_vote", "welcome") and target_id:
+    if rule_type in ("expel", "suspend_vote", "welcome", "impeach", "elect") and target_id:
         target = agents.get(target_id)
         if target is None:
             return ActionResult(False, f"no such agent '{target_id}'")
@@ -276,6 +276,18 @@ def _propose_rule(actor: Agent, intent: Intent, world: World, agents: dict[str, 
                             if a.can_vote(world.tick) and a.agent_id != target_id)
             if remaining < governance.MIN_ELIGIBLE_AFTER_EXPEL:
                 return ActionResult(False, "town too small to expel anyone")
+        if rule_type == "impeach":
+            if target_id != world.town_leader_id:
+                return ActionResult(False, "impeach names the sitting leader")
+            if not governance.impeach_justified(world, target):
+                return ActionResult(False, "no grounds to impeach — no crisis, ruin, or collapsed reputation")
+        if rule_type == "elect":
+            if world.town_leader_id:
+                return ActionResult(False, "someone already holds the chair")
+            if target.expelled or not target.can_vote(world.tick):
+                return ActionResult(False, "that name is not eligible for the chair")
+            if getattr(target, "solvency", "ok") == "bankrupt":
+                return ActionResult(False, "a bankrupt resident cannot take the chair")
     return governance.propose(actor, intent.args, world)
 
 
@@ -311,6 +323,24 @@ def _adopt_invention(actor: Agent, intent: Intent, world: World, agents: dict[st
     return ActionResult(ok, reason, state_changes=changes, consequences=consequences)
 
 
+def _worship(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
+    """Join the service at this agent's faith home. faith.py is the rule sheet."""
+    ok, reason, consequences = faith.apply_worship(actor, world, agents)
+    return ActionResult(ok, reason, legal=ok or "unaffiliated" not in reason,
+                        consequences=consequences)
+
+
+def _convert(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
+    """Be received by a living congregation. Decider names the faith; faith.py validates."""
+    faith_id = intent.args.get("faith") or intent.args.get("to_faith") or intent.args.get("convert_faith")
+    if not faith_id:
+        faith_id = faith.session_at(actor.location, world)
+    if not faith_id:
+        return ActionResult(False, "no congregation in session here")
+    ok, reason, consequences = faith.apply_convert(actor, faith_id, world, agents)
+    return ActionResult(ok, reason, consequences=consequences)
+
+
 def _idle(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
     """Handler for the "idle" action. Does nothing and always succeeds
     -- the engine's and Deciders' default/fallback action when there's
@@ -339,5 +369,7 @@ _REGISTRY = {
     "lobby": _lobby,
     "invent": _invent,
     "adopt_invention": _adopt_invention,
+    "worship": _worship,
+    "convert": _convert,
     "idle": _idle,
 }

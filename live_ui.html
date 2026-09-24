@@ -69,6 +69,7 @@
             <label class="menu-row"><input type="checkbox" data-layer="residents" checked> Residents</label>
             <label class="menu-row"><input type="checkbox" data-layer="relationships"> Relationships</label>
             <label class="menu-row"><input type="checkbox" data-layer="factions" checked> Factions</label>
+            <label class="menu-row"><input type="checkbox" data-layer="faith" checked> Faith</label>
             <label class="menu-row"><input type="checkbox" data-layer="crossings"> Domain crossings</label>
             <label class="menu-row"><input type="checkbox" data-layer="anomalies"> Anomalies</label>
             <label class="menu-row"><input type="checkbox" data-layer="terrain"> Terrain</label>
@@ -268,6 +269,11 @@ const TRAIT_MEANING = {
   risk_tolerance: 'how they act in a bank run or shock',
   piety: 'how much their faith pulls them to chapel, hall, or farm'
 };
+const LIVELIHOOD_MEANING = {
+  farmer: 'climate work — flood and famine hit this livelihood first',
+  trader: 'market and bank — a bank run wipes balances first',
+  laborer: 'street wages — unrest shuts the square'
+};
 function field(label, value, hint) {
   return '<div class="field" title="' + escapeHtml(hint || label) + '"><div class="k">' +
     escapeHtml(label) + '</div><div class="v">' + value + '</div></div>';
@@ -332,6 +338,7 @@ function drawBaseLayers(svg) {
 
   svg.appendChild(svgEl('g', { id: 'mobilityLayer' }));
   svg.appendChild(svgEl('g', { id: 'crisisLayer' }));
+  svg.appendChild(svgEl('g', { id: 'faithLayer' }));
   drawStreets(null);
 }
 
@@ -436,6 +443,64 @@ function drawCrisis(frame) {
   });
 }
 
+function drawFaith(frame) {
+  const g = document.getElementById('faithLayer');
+  if (!g) return;
+  g.innerHTML = '';
+  if (!mapLayers.faith || !frame) return;
+  const info = frame.faith || {};
+  const homes = info.homes || { vale_covenant: 'chapel', hall_creed: 'town_hall', old_ways: 'farm' };
+  const names = info.names || FAITH_NAME;
+  const sessions = info.sessions || [];
+  const census = info.census || {};
+  Object.entries(homes).forEach(([fid, place]) => {
+    if (!place) return;
+    const loc = locOf(place);
+    const color = FAITH_COLOR[fid] || '#7a8194';
+    const n = census[fid] || 0;
+    g.appendChild(svgEl('circle', {
+      cx: loc.x, cy: loc.y, r: 34 + n * 3, fill: 'none',
+      stroke: color, 'stroke-width': 2, opacity: 0.55
+    }));
+  });
+  sessions.forEach(s => {
+    const loc = locOf(s.location);
+    const color = FAITH_COLOR[s.faith] || '#6b8f71';
+    g.appendChild(svgEl('circle', {
+      cx: loc.x, cy: loc.y, r: 48, fill: color, opacity: 0.16
+    }));
+    const t = svgEl('text', {
+      x: loc.x, y: loc.y - 46, 'text-anchor': 'middle',
+      fill: '#2a3128', 'font-size': 12, 'font-weight': 800
+    });
+    const lead = faithLeaderName(s.faith, frame);
+    t.textContent = (s.faith_name || names[s.faith] || s.faith) +
+      ' · in session · ' + (s.present || 0) + (lead ? ' · ' + lead : '');
+    g.appendChild(t);
+  });
+  if (info.festival) {
+    const place = homes[info.festival];
+    if (place) {
+      const loc = locOf(place);
+      const t = svgEl('text', {
+        x: loc.x, y: loc.y + 56, 'text-anchor': 'middle',
+        fill: '#5a3a10', 'font-size': 12, 'font-weight': 800
+      });
+      t.textContent = 'FESTIVAL';
+      g.appendChild(t);
+    }
+  }
+  if (info.water_blessing) {
+    const farm = locOf('farm');
+    const t = svgEl('text', {
+      x: farm.x, y: farm.y + 72, 'text-anchor': 'middle',
+      fill: '#134056', 'font-size': 11, 'font-weight': 700
+    });
+    t.textContent = 'WATER BLESSING';
+    g.appendChild(t);
+  }
+}
+
 function updateCrisisBanner(frame) {
   const el = document.getElementById('crisisBanner');
   if (!el) return;
@@ -468,6 +533,7 @@ function applyMapChrome() {
   set('landuseLayer', showLand);
   set('mobilityLayer', showRoads);
   set('crisisLayer', showCrisis);
+  set('faithLayer', mapLayers.faith);
   if (latestFrame) updateTown(latestFrame);
 }
 
@@ -492,7 +558,8 @@ function drawAgentToken(id, cx, cy, factionId, factionLabel) {
     grp.appendChild(svgEl('circle', { cx: 0, cy: 0, r: 11, fill: 'none', stroke: factionColor(factionId), 'stroke-width': 2 }));
   }
   const expelled = latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].expelled;
-  const muted = expelled || (latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].can_vote === false);
+  const broke = latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].solvency === 'bankrupt';
+  const muted = expelled || broke || (latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].can_vote === false);
   grp.appendChild(svgEl('circle', {
     cx: 0, cy: -1, r: 7.5, fill: color,
     stroke: expelled ? '#ef5b5b' : (isLLM ? '#c4a35a' : FAITH_COLOR[faithOf(id, latestFrame)] || '#2a3128'),
@@ -503,7 +570,12 @@ function drawAgentToken(id, cx, cy, factionId, factionLabel) {
   label.textContent = nameOf(id).split(' ')[0];
   grp.appendChild(label);
   const title = svgEl('title', {});
-  title.textContent = nameOf(id) + ' · ' + faithLabel(id, latestFrame) + (factionLabel ? ' · ' + factionLabel : '');
+  if (mapLayers.faith && isFaithLeader(id, latestFrame)) {
+    grp.appendChild(svgEl('circle', { cx: 0, cy: -1, r: 11.5, fill: 'none', stroke: '#c4a35a', 'stroke-width': 1.6 }));
+  }
+  title.textContent = nameOf(id) + ' · ' + faithLabel(id, latestFrame) +
+    (isFaithLeader(id, latestFrame) ? ' · faith leader' : '') +
+    (factionLabel ? ' · ' + factionLabel : '');
   grp.appendChild(title);
   return grp;
 }
@@ -519,6 +591,7 @@ function updateTown(frame) {
   drawStreets(frame);
   drawLandUse(frame);
   drawCrisis(frame);
+  drawFaith(frame);
   updateCrisisBanner(frame);
   const pos = {};
   const byLoc = {};
@@ -662,11 +735,17 @@ function updateInspector(id, frame) {
   document.getElementById('inspMeta').innerHTML =
     field('Role', escapeHtml(role), ROLE_MEANING[role] || '') +
     field('Where', escapeHtml(String(st.location || '').replace('_', ' ')), 'Place they are standing this tick') +
+    field('Livelihood', escapeHtml(livelihoodLabel(st.livelihood)), LIVELIHOOD_MEANING[st.livelihood] || '') +
     field('Faction', escapeHtml(fid ? factionName(fid, frame) : 'none yet'), 'Forms when people keep voting the same way');
+  const offices = [];
+  if (id === frame.town_leader_id) offices.push('town leader');
+  if (isFaithLeader(id, frame)) offices.push('faith leader');
   document.getElementById('inspFaith').innerHTML =
     field('Faith', escapeHtml(faithLabel(id, frame)) +
       (st.piety != null ? ' · piety ' + Math.round(st.piety * 100) + '%' : ''),
-      TRAIT_MEANING.piety);
+      TRAIT_MEANING.piety) +
+    field('Office', offices.length ? escapeHtml(offices.join(' · ')) : 'none',
+      'Town leader is the hall. Faith leader is the sitting head of their congregation.');
   const face = document.getElementById('inspFace');
   face.style.background = agentColor(id);
   face.textContent = initials(id);
@@ -702,12 +781,18 @@ function renderExtra(id, frame) {
   if (extraTab === 'profile') {
     const mind = LLM_IDS.includes(id) ? 'LLM — a language model chose this tick'
       : 'rule-based — traits and heuristics chose this tick';
-    const vote = st.expelled ? 'expelled — cannot vote'
-      : (st.can_vote === false ? 'vote suspended — temporarily off the roll' : 'on the roll — may vote');
+    const civic = st.can_vote_civic === false || st.expelled || st.can_vote === false
+      ? 'no civic ballot' : 'civic ballot — curfew, expel, welcome, festival';
+    const econ = st.can_vote_economy === false || st.expelled || st.can_vote === false
+      ? 'no economy ballot' : 'economy ballot — wealth tax, water blessing';
+    const sol = st.solvency === 'bankrupt' ? 'bankrupt — still seated on both ballots'
+      : (st.solvency === 'strained' ? 'going bankrupt — still seated' : 'solvent');
     box.innerHTML =
       field('Mind', escapeHtml(a.decider_kind || 'RuleBasedDecider'), mind) +
-      field('Franchise', escapeHtml(vote), 'Who may cast a ballot this tick') +
-      '<div class="legend">Role is the strongest trait. Faith is their congregation. Piety is how hard that faith pulls them. Faction is a voting bloc, not a job title.</div>';
+      field('Civic vote', escapeHtml(civic), 'Hall sanctions take this. Bankruptcy does not.') +
+      field('Economy vote', escapeHtml(econ), 'Same seat as the civic ballot. Broke is not exile.') +
+      field('Solvency', escapeHtml(sol), 'Ledger standing, not franchise') +
+      '<div class="legend">Role is the strongest trait. Livelihood is how crises choose a victim. Bankruptcy does not take either ballot.</div>';
   } else if (extraTab === 'rel') {
     const edges = (frame.relationship_edges || []).filter(e => e[0] === id || e[1] === id);
     box.innerHTML = (edges.length
@@ -720,13 +805,15 @@ function renderExtra(id, frame) {
       '<div class="legend">Ally is a positive score from speaking and praise. Rival is negative, usually from gossip or scandal.</div>';
   } else if (extraTab === 'res') {
     const food = (st.inventory && st.inventory.food != null) ? Number(st.inventory.food).toFixed(2) : '0';
-    const vote = st.expelled ? 'expelled' : (st.can_vote === false ? 'vote suspended' : 'may vote');
+    const vote = st.expelled ? 'expelled' : (st.can_vote === false ? 'vote suspended' : 'civic and economy ballots');
+    const sol = st.solvency || 'ok';
     box.innerHTML =
-      field('Money', '$' + st.money.toFixed(2), 'Coins they hold') +
+      field('Money', '$' + Number(st.money).toFixed(2), 'Coins they hold') +
+      field('Solvency', escapeHtml(sol.replace('_', ' ')), 'ok, strained (going bankrupt), or bankrupt') +
       field('Reputation', Math.round(st.reputation * 100) + ' / 100', 'Town standing. Low standing can make someone notorious.') +
       field('Food', food, 'Private inventory, not the farm stores') +
       field('Franchise', escapeHtml(vote), 'Whether they can cast a ballot') +
-      '<div class="legend">Reputation is 0–100. Food is what they carry. The farm’s remaining stores are on Topography during a famine.</div>';
+      '<div class="legend">Reputation is 0–100. Food is what they carry. A bankrupt farmer still votes the water blessing and the curfew.</div>';
   } else if (extraTab === 'traits') {
     const traits = Object.entries(a.traits || {});
     box.innerHTML = (traits.length
@@ -829,16 +916,22 @@ function renderPeople(frame) {
   if (!el) return;
   const q = ((document.getElementById('peopleSearch') || {}).value || '').toLowerCase();
   el.innerHTML = Object.keys(frame.agents).filter(id => {
-    const blob = (nameOf(id) + ' ' + roleOf(id) + ' ' + faithLabel(id, frame) + ' ' + (frame.agents[id].location || '')).toLowerCase();
+    const blob = (nameOf(id) + ' ' + roleOf(id) + ' ' + faithLabel(id, frame) + ' ' +
+      livelihoodLabel(frame.agents[id].livelihood) + ' ' + (frame.agents[id].solvency || '') +
+      ' ' + (frame.agents[id].location || '')).toLowerCase();
     return !q || blob.indexOf(q) >= 0;
   }).map(id => {
     const fid = (frame.factions || {})[id];
     return '<div class="person" data-id="' + id + '"><div class="avatar" style="background:' + agentColor(id) +
       '"></div><div><b>' + escapeHtml(nameOf(id)) + '</b><div class="tiny" title="' +
       escapeHtml(ROLE_MEANING[roleOf(id)] || '') + '">role ' + escapeHtml(roleOf(id)) +
+      ' · ' + escapeHtml(livelihoodLabel(frame.agents[id].livelihood)) +
       ' · faith ' + escapeHtml(faithLabel(id, frame)) +
+      (frame.agents[id].solvency && frame.agents[id].solvency !== 'ok'
+        ? ' · ' + escapeHtml(frame.agents[id].solvency.replace('_', ' ')) : '') +
       (fid ? ' · faction ' + escapeHtml(factionName(fid, frame)) : '') +
       (id === frame.town_leader_id ? ' · town leader' : '') +
+      (isFaithLeader(id, frame) ? ' · faith leader' : '') +
       (frame.agents[id].expelled ? ' · expelled' : (frame.agents[id].can_vote === false ? ' · vote suspended' : '')) +
       ' · at ' + escapeHtml(String(frame.agents[id].location || '').replace('_', ' ')) + '</div></div></div>';
   }).join('');
@@ -869,8 +962,15 @@ function renderPolitics(frame) {
     (members[fid] = members[fid] || []).push(nameOf(id));
   });
   const voters = Object.entries(frame.agents).filter(([, st]) => st.can_vote !== false && !st.expelled);
-  const leader = frame.town_leader_id ? nameOf(frame.town_leader_id) : 'none';
-  let html = '<div class="lab-row"><b>Leader</b>' + escapeHtml(leader) + ' · ' + voters.length + ' on the roll</div>';
+  const vacant = !frame.town_leader_id;
+  const leader = vacant ? 'vacant — election needed' : nameOf(frame.town_leader_id);
+  let html = '<div class="lab-row"><b>Leader</b>' + escapeHtml(leader) +
+    (frame.leader_solvency && !vacant ? ' · ' + escapeHtml(frame.leader_solvency) : '') +
+    ' · ' + voters.length + ' on the roll</div>';
+  if (vacant && (frame.succession_candidates || []).length) {
+    html += '<div class="lab-row"><b>Election slate</b>' +
+      (frame.succession_candidates || []).map(c => escapeHtml(c.name || c.id)).join(', ') + '</div>';
+  }
   html += '<div class="tiny" style="margin:8px 0 4px">OPEN PROPOSALS</div>';
   html += props.length ? props.map(p => {
     const votes = Object.values(p.votes || {});
@@ -889,6 +989,36 @@ function renderPolitics(frame) {
   html += fids.length ? fids.map(fid =>
     '<div class="lab-row"><b>' + escapeHtml(names[fid] || fid) + '</b>' + members[fid].map(escapeHtml).join(', ') + '</div>'
   ).join('') : '<div class="tiny">no factions yet</div>';
+  const faith = frame.faith || {};
+  const census = faith.census || {};
+  const faithNames = faith.names || FAITH_NAME;
+  html += '<div class="tiny" style="margin:8px 0 4px">CONGREGATIONS</div>';
+  const blocs = Object.keys(census);
+  html += blocs.length ? blocs.map(fid => {
+    const here = (faith.sessions || []).find(s => s.faith === fid);
+    const n = census[fid] || 0;
+    const leadName = faithLeaderName(fid, frame);
+    return '<div class="lab-row"><b>' + escapeHtml(faithNames[fid] || fid) + '</b>' +
+      n + (n === 1 ? ' member' : ' members') +
+      (leadName ? ' · led by ' + escapeHtml(leadName) : '') +
+      (here ? ' · in session at ' + escapeHtml(String(here.location || '').replace('_', ' ')) +
+        ' · ' + here.present + ' present' : '') + '</div>';
+  }).join('') : '<div class="tiny">no census yet</div>';
+  if (faith.festival) {
+    html += '<div class="lab-row"><b>Festival</b>' + escapeHtml(faithNames[faith.festival] || faith.festival) + '</div>';
+  }
+  if (faith.water_blessing) {
+    html += '<div class="lab-row"><b>Water blessing</b>farm regen +0.15</div>';
+  }
+  const eco = frame.economy || {};
+  const ruined = eco.ruined || [];
+  html += '<div class="tiny" style="margin:8px 0 4px">HARDSHIP</div>';
+  html += ruined.length ? ruined.map(r =>
+    '<div class="lab-row"><b>' + escapeHtml(r.name || nameOf(r.id)) + '</b>' +
+    escapeHtml(livelihoodLabel(r.livelihood)) + ' · ' + escapeHtml(r.solvency) +
+    ' · $' + Number(r.money || 0).toFixed(2) +
+    (r.can_vote_civic || r.can_vote_economy ? ' · still seated' : ' · no ballot') + '</div>'
+  ).join('') : '<div class="tiny">no one ruined this tick</div>';
   el.innerHTML = html;
 }
 

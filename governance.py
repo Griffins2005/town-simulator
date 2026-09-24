@@ -67,7 +67,13 @@ VOTE_RULES = {
     "expel":        {"quorum": 0.60, "pass": 0.67, "window": 14, "severity": "severe"},
     "suspend_vote": {"quorum": 0.50, "pass": 0.55, "window": 8,  "severity": "personal"},
     "welcome":      {"quorum": 0.35, "pass": 0.50, "window": 8,  "severity": "routine"},
+    "festival":     {"quorum": 0.40, "pass": 0.50, "window": 8,  "severity": "civic"},
+    "water_blessing": {"quorum": 0.35, "pass": 0.50, "window": 8, "severity": "civic"},
+    "impeach":      {"quorum": 0.50, "pass": 0.55, "window": 8,  "severity": "severe"},
+    "elect":        {"quorum": 0.40, "pass": 0.50, "window": 8,  "severity": "civic"},
 }
+
+FESTIVAL_TICKS = 36
 
 _SUPPORTED_RULE_TYPES = set(VOTE_RULES)
 
@@ -98,12 +104,113 @@ def eligible_voters(agents: dict, tick: int) -> list[Agent]:
     return [a for a in agents.values() if a.can_vote(tick)]
 
 
-def town_leader(agents: dict) -> Agent | None:
-    """The sitting civic lead: most enacted laws, then reputation, among voters."""
+def _eligible_for_office(agent: Agent, tick: int, allow_broke: bool = False) -> bool:
+    if agent.expelled or not agent.can_vote(tick):
+        return False
+    if not allow_broke and getattr(agent, "solvency", "ok") == "bankrupt":
+        return False
+    return True
+
+
+def heir(agents: dict, world: World) -> Agent | None:
+    """Who the hall would name if it had to pick tonight — not seated yet."""
+    pool = [a for a in agents.values() if _eligible_for_office(a, world.tick)]
+    if not pool:
+        pool = [a for a in agents.values() if not a.expelled]
+    if not pool:
+        return None
+    return max(pool, key=lambda a: (a.official_track_record, a.reputation, a.persona.sociability))
+
+
+def town_leader(agents: dict, world: World | None = None) -> Agent | None:
+    """The sitting civic lead, or None if the chair is vacant."""
+    if world is not None:
+        sitting = world.town_leader_id
+        if sitting and sitting in agents:
+            who = agents[sitting]
+            if not who.expelled:
+                return who
+        return None
     pool = [a for a in agents.values() if not a.expelled]
     if not pool:
         return None
     return max(pool, key=lambda a: (a.official_track_record, a.reputation, a.persona.sociability))
+
+
+def succession_candidates(agents: dict, world: World, limit: int = 3) -> list[dict]:
+    pool = [a for a in agents.values() if _eligible_for_office(a, world.tick)]
+    pool.sort(key=lambda a: (a.official_track_record, a.reputation, a.persona.sociability), reverse=True)
+    return [
+        {"id": a.agent_id, "name": a.persona.name, "official": a.official_track_record}
+        for a in pool[:limit]
+    ]
+
+
+def seat(world: World, agents: dict, agent: Agent, how: str) -> None:
+    world.town_leader_id = agent.agent_id
+    world.leader_seated_tick = world.tick
+    kind = "leader_elected" if how == "elected" else "leader_seated"
+    world.log_event(kind, agent=agent.agent_id, name=agent.persona.name, how=how)
+    world.notice_board.append({
+        "tick": world.tick, "from": "town_hall", "about": agent.agent_id,
+        "text": f"{agent.persona.name} is seated as town leader ({how})",
+    })
+    del world.notice_board[:-8]
+
+
+def vacate(world: World, agents: dict, reason: str) -> Agent | None:
+    sitting_id = world.town_leader_id
+    who = agents.get(sitting_id) if sitting_id else None
+    world.town_leader_id = None
+    world.office_ever_vacated = True
+    kind = "leader_impeached" if reason == "impeached" else "leader_stepped_down"
+    world.log_event(
+        kind, agent=sitting_id, name=who.persona.name if who else sitting_id, reason=reason,
+    )
+    world.notice_board.append({
+        "tick": world.tick, "from": "town_hall", "about": sitting_id,
+        "text": f"{who.persona.name if who else 'the leader'} left the chair — {reason}",
+    })
+    del world.notice_board[:-8]
+    return who
+
+
+def ensure_office(world: World, agents: dict) -> None:
+    """Founding seat only. After a vacancy, the town must elect."""
+    if world.town_leader_id:
+        return
+    if world.office_ever_vacated:
+        return
+    first = heir(agents, world)
+    if first:
+        seat(world, agents, first, "founding")
+
+
+def review_office(world: World, agents: dict) -> None:
+    """Clock: a bankrupt or expelled lead steps down. Election is a vote."""
+    sitting_id = world.town_leader_id
+    if not sitting_id:
+        return
+    who = agents.get(sitting_id)
+    if who is None or who.expelled:
+        vacate(world, agents, "ineligible")
+        return
+    if getattr(who, "solvency", "ok") == "bankrupt":
+        vacate(world, agents, "bankrupt")
+
+
+def impeach_justified(world: World, sitting: Agent | None) -> bool:
+    """Crises, a ruined lead, or a collapsed reputation — not a peacetime whim."""
+    if sitting is None or sitting.expelled:
+        return False
+    if getattr(sitting, "solvency", "ok") in ("strained", "bankrupt"):
+        return True
+    if sitting.reputation < 0.32:
+        return True
+    if world.active_crises:
+        seated = getattr(world, "leader_seated_tick", 0) or 0
+        return world.tick - seated >= 10
+    return False
 
 
 def vote_rules_for(rule_type: str, world: World) -> dict:
@@ -117,7 +224,13 @@ def vote_rules_for(rule_type: str, world: World) -> dict:
         "quorum": 0.4, "pass": PASS_THRESHOLD, "window": VOTING_WINDOW_TICKS, "severity": "routine",
     }))
     intensity = max((world.crisis_intensity or {}).values(), default=0.0)
-    emergency = intensity >= 0.65 and rule_type in ("curfew", "wealth_tax", "repeal", "suspend_vote")
+    emergency = intensity >= 0.65 and rule_type in (
+        "curfew", "wealth_tax", "repeal", "suspend_vote", "water_blessing", "impeach",
+    )
+    if "flood" in (world.active_crises or set()) and rule_type == "water_blessing":
+        emergency = True
+    if "unrest" in (world.active_crises or set()) and rule_type == "impeach":
+        emergency = True
     if emergency:
         base["quorum"] = max(0.25, base["quorum"] - 0.15)
         base["window"] = max(6, base["window"] - 4)
@@ -194,15 +307,48 @@ def propose(actor: Agent, args: dict, world: World):
         if repeal_target not in _enacted_keys_by_proposal:
             return ActionResult(False, f"proposal '{repeal_target}' has no active enacted rule to repeal")
 
-    if rule_type in ("expel", "suspend_vote", "welcome"):
+    if rule_type in ("expel", "suspend_vote", "welcome", "impeach", "elect"):
         if not target_id:
             return ActionResult(False, f"{rule_type} needs rule_args.target_agent")
-        # Target is validated at enact time against the live agent map;
-        # propose only rejects self-targeting and missing ids when the
-        # caller already passed a world-adjacent hint via rule_args.
-        if target_id == actor.agent_id and rule_type != "welcome":
+        if target_id == actor.agent_id and rule_type not in ("welcome", "elect"):
             return ActionResult(False, "cannot target yourself")
         rule_args["target_agent"] = target_id
+
+    if rule_type == "impeach":
+        sitting = world.town_leader_id
+        if not sitting:
+            return ActionResult(False, "the chair is already vacant")
+        if target_id != sitting:
+            return ActionResult(False, "impeach names the sitting leader")
+        if any(p.get("rule_type") == "impeach" for p in _open_proposals.values()):
+            return ActionResult(False, "an impeachment is already open")
+
+    if rule_type == "elect":
+        if world.town_leader_id:
+            return ActionResult(False, "someone already holds the chair")
+        if any(p.get("rule_type") == "elect" for p in _open_proposals.values()):
+            return ActionResult(False, "an election is already open")
+
+    if rule_type == "festival":
+        fid = getattr(actor.persona, "faith", "unaffiliated")
+        if fid == "unaffiliated":
+            return ActionResult(False, "unaffiliated — no festival to call")
+        if float(getattr(actor.persona, "piety", 0)) < 0.45:
+            return ActionResult(False, "piety too low to call a festival")
+        if world.active_rules.get("festival_faith"):
+            return ActionResult(False, "a festival is already underway")
+        rule_args["faith"] = fid
+
+    if rule_type == "water_blessing":
+        if float(getattr(actor.persona, "piety", 0)) < 0.35:
+            return ActionResult(False, "piety too low to bless the water")
+        if world.active_rules.get("water_blessing"):
+            return ActionResult(False, "the water is already blessed")
+
+    if rule_type in ("festival", "water_blessing") and any(
+        p.get("rule_type") == rule_type for p in _open_proposals.values()
+    ):
+        return ActionResult(False, f"a {rule_type} vote is already open")
 
     already_open = any(
         p.get("rule_type") == rule_type
@@ -266,8 +412,8 @@ def cast_vote(actor: Agent, proposal_id, choice: str, world: World):
         return ActionResult(False, "voting window has closed")
     if choice not in ("yes", "no"):
         return ActionResult(False, f"invalid vote choice '{choice}'")
-    if not actor.can_vote(world.tick):
-        return ActionResult(False, "voting rights suspended")
+    if not actor.can_vote_on(world.tick, proposal.get("rule_type")):
+        return ActionResult(False, "no ballot on this vote")
 
     proposal["votes"][actor.agent_id] = choice
     world.log_event("vote_cast", proposal_id=proposal_id, by=actor.agent_id, choice=choice)
@@ -308,7 +454,7 @@ def apply_lobby(actor: Agent, args: dict, world: World, agents: dict):
         return ActionResult(True, "already agreed",
                             consequences=["already leaning that way"])
 
-    leader = town_leader(agents)
+    leader = town_leader(agents, world)
     rel = target.relationship_with(actor.agent_id)
     weight = (
         0.22
@@ -365,6 +511,13 @@ def tick(world: World, agents: dict) -> None:
     for pid in closed_ids:
         proposal = _open_proposals.pop(pid)
         _finalize(proposal, world, agents)
+    # Drop time-boxed rites (festival) from the enacted roll once their
+    # keys have left active_rules, so Politics does not list a festival
+    # that already ended.
+    for pid, keys in list(_enacted_keys_by_proposal.items()):
+        if keys and all(k not in world.active_rules for k in keys):
+            _enacted_keys_by_proposal.pop(pid, None)
+            _rule_type_by_proposal.pop(pid, None)
 
 
 def _finalize(proposal: dict, world: World, agents: dict) -> None:
@@ -429,6 +582,8 @@ def _finalize(proposal: dict, world: World, agents: dict) -> None:
     proposer = agents.get(proposal["proposed_by"])
     if proposer:
         proposer.official_track_record += 1
+        if proposal["rule_type"] in ("festival", "water_blessing"):
+            proposer.pastoral_track_record = getattr(proposer, "pastoral_track_record", 0) + 1
 
     rule_type = proposal["rule_type"]
     rule_args = proposal["rule_args"]
@@ -479,6 +634,20 @@ def _finalize(proposal: dict, world: World, agents: dict) -> None:
     elif rule_type == "welcome":
         _enact_welcome(proposal, world, agents)
         return
+    elif rule_type == "impeach":
+        _enact_impeach(proposal, world, agents)
+        return
+    elif rule_type == "elect":
+        _enact_elect(proposal, world, agents)
+        return
+    elif rule_type == "festival":
+        fid = rule_args.get("faith") or "vale_covenant"
+        world.active_rules["festival_faith"] = fid
+        world.active_rules["festival_until"] = world.tick + FESTIVAL_TICKS
+        enacted_keys = {"festival_faith", "festival_until"}
+    elif rule_type == "water_blessing":
+        world.active_rules["water_blessing"] = True
+        enacted_keys = {"water_blessing"}
 
     if enacted_keys:
         _enacted_keys_by_proposal[proposal["proposal_id"]] = enacted_keys
@@ -585,6 +754,31 @@ def _enact_expel(proposal: dict, world: World, agents: dict) -> None:
     })
     del world.notice_board[:-8]
     _pending_welcomes.append({"replacing": target.agent_id, "tick": world.tick})
+    if world.town_leader_id == target.agent_id:
+        vacate(world, agents, "ineligible")
+
+
+def _enact_impeach(proposal: dict, world: World, agents: dict) -> None:
+    target_id = (proposal.get("rule_args") or {}).get("target_agent")
+    if not target_id or target_id != world.town_leader_id:
+        return
+    who = vacate(world, agents, "impeached")
+    if who:
+        who.reputation = max(0.05, who.reputation - 0.12)
+        who.memory.add(MemoryEntry(world.tick, "was_impeached", None,
+                                   {"proposal_id": proposal["proposal_id"]}))
+
+
+def _enact_elect(proposal: dict, world: World, agents: dict) -> None:
+    if world.town_leader_id:
+        return
+    target_id = (proposal.get("rule_args") or {}).get("target_agent")
+    target = agents.get(target_id)
+    if target is None or not _eligible_for_office(target, world.tick):
+        return
+    seat(world, agents, target, "elected")
+    target.memory.add(MemoryEntry(world.tick, "was_elected", None,
+                                  {"proposal_id": proposal["proposal_id"]}))
 
 
 def _enact_suspend(proposal: dict, world: World, agents: dict) -> None:

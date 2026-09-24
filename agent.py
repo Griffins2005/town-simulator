@@ -50,6 +50,8 @@ class Persona:
     # where the agent spends a quiet hour.
     faith: str = "unaffiliated"
     piety: float = 0.2
+    # How they earn: farmer (climate), trader (bank/market), laborer (streets).
+    livelihood: str = "laborer"
 
 
 @dataclass
@@ -100,12 +102,19 @@ class Agent:
     # consequential if discovered (further to fall). Starts at 0 for
     # every agent -- nobody is born an official.
     official_track_record: int = 0
+    # Count of services this agent has led (worship with others present)
+    # and rites they got enacted. faith.py's congregation_leader reads
+    # this the way town_leader reads official_track_record.
+    pastoral_track_record: int = 0
     # Civic standing. Expelled residents stay in town as outcasts but
     # lose the franchise; a temporary suspension keeps them in the
     # census while they cannot vote. Mutated only by governance.py.
     voting_rights: bool = True
     vote_suspended_until: int = 0
     expelled: bool = False
+    # Ledger standing. Bankruptcy is insolvency, not exile — they keep
+    # both the civic ballot and the economic one. Mutated only by economy.py.
+    solvency: str = "ok"  # ok | strained | bankrupt
     memory: MemoryLog = field(default_factory=MemoryLog)
     decider: object = None  # type: Decider, kept loose to avoid circular import
 
@@ -114,6 +123,16 @@ class Agent:
         if self.expelled or not self.voting_rights:
             return False
         return tick >= self.vote_suspended_until
+
+    def can_vote_on(self, tick: int, rule_type: str | None = None) -> bool:
+        """Civic and economic ballots are separate labels of the same seat.
+
+        Expulsion or a suspension takes both. Bankruptcy takes neither —
+        a ruined farmer still votes the water blessing and the curfew.
+        `rule_type` is accepted so callers can ask about one ballot
+        without a second code path.
+        """
+        return self.can_vote(tick)
 
     def relationship_with(self, other_id: str) -> float:
         """Get this agent's opinion of `other_id`, defaulting to neutral (0.0)

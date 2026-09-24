@@ -13,6 +13,7 @@ import random
 
 from agent import Agent, Persona
 from decision import RuleBasedDecider
+from economy import assign_livelihood
 from faith import assign_faith
 from world import Location, World
 
@@ -72,6 +73,8 @@ def build_agents(rng: random.Random, num_agents: int) -> dict:
     for i in range(num_agents):
         agent_id = f"agent_{i:02d}"
         faith_id, piety = assign_faith(i, rng)
+        livelihood = assign_livelihood(i, faith_id)
+        start_at = "farm" if livelihood == "farmer" and rng.random() < 0.55 else rng.choice(LOCATIONS)
         persona = Persona(
             name=FIRST_NAMES[i % len(FIRST_NAMES)],
             industriousness=rng.random(),
@@ -81,11 +84,12 @@ def build_agents(rng: random.Random, num_agents: int) -> dict:
             risk_tolerance=rng.random(),
             faith=faith_id,
             piety=piety,
+            livelihood=livelihood,
         )
         agent = Agent(
             agent_id=agent_id,
             persona=persona,
-            location=rng.choice(LOCATIONS),
+            location=start_at,
             money=round(rng.uniform(0, 20), 2),
             inventory={"food": round(rng.uniform(0, 3), 1)},
             decider=RuleBasedDecider(rng=rng),
@@ -113,6 +117,7 @@ def spawn_newcomer(rng: random.Random, agents: dict, world, replacing: str | Non
     pool = [n for n in NEWCOMER_NAMES if n not in used_names] or NEWCOMER_NAMES
     agent_id = next_agent_id(agents)
     faith_id, piety = assign_faith(len(agents), rng)
+    livelihood = assign_livelihood(len(agents), faith_id)
     persona = Persona(
         name=rng.choice(pool),
         industriousness=rng.random(),
@@ -122,6 +127,7 @@ def spawn_newcomer(rng: random.Random, agents: dict, world, replacing: str | Non
         risk_tolerance=rng.random(),
         faith=faith_id,
         piety=piety,
+        livelihood=livelihood,
     )
     agent = Agent(
         agent_id=agent_id,

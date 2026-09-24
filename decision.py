@@ -141,6 +141,31 @@ class Perception:
     reachable: list[str] = field(default_factory=list)
     space: dict = field(default_factory=dict)
     blocked_streets: list[str] = field(default_factory=list)
+    # Religion as institution: is my congregation in session, how many
+    # of us there are, and which civic rites are already standing.
+    worship_now: bool = False
+    faith_home: str | None = None
+    congregation_size: int = 0
+    congregation_here: int = 0
+    session_faith: str | None = None
+    session_present: int = 0
+    faith_census: dict = field(default_factory=dict)
+    festival_faith: str | None = None
+    water_blessing: bool = False
+    self_livelihood: str = "laborer"
+    self_livelihood_name: str = "Laborer"
+    self_solvency: str = "ok"
+    can_vote_civic: bool = True
+    can_vote_economy: bool = True
+    crisis_exposure: dict = field(default_factory=dict)
+    is_faith_leader: bool = False
+    faith_leader_id: str | None = None
+    faith_leader_name: str | None = None
+    congregation_leaders: list = field(default_factory=list)
+    office_vacant: bool = False
+    succession_candidates: list = field(default_factory=list)
+    impeach_justified: bool = False
+    leader_solvency: str | None = None
 
 
 @dataclass
@@ -258,17 +283,54 @@ class RuleBasedDecider:
         # yet. Franchise-only -- a suspended or expelled resident is not
         # a hidden extra ballot. Filtered to UNVOTED proposals.
         unvoted = [prop for prop in p.open_proposals if agent_id not in prop.get("votes", {})]
+        succession_votes = [prop for prop in unvoted
+                            if prop.get("rule_type") in ("impeach", "elect")]
+        if p.can_vote and succession_votes:
+            return take(self._vote(agent_id, p, succession_votes[0]),
+                        "the chair is in play — this vote comes first", 0.9)
         if p.can_vote and unvoted:
             return take(self._vote(agent_id, p, unvoted[0]),
                         "an open proposal still needs this vote", 0.88)
+
+        if getattr(p, "office_vacant", False) or not p.town_leader_id:
+            succession_draft = self._maybe_succession(agent_id, p, take)
+            if succession_draft is not None:
+                return succession_draft
 
         lobby_draft = self._maybe_lobby(agent_id, p, take)
         if lobby_draft is not None:
             return lobby_draft
 
+        succession_draft = self._maybe_succession(agent_id, p, take)
+        if succession_draft is not None:
+            return succession_draft
+
         sanction_draft = self._maybe_sanction(agent_id, p, take)
         if sanction_draft is not None:
             return sanction_draft
+
+        rite_draft = self._maybe_rite(agent_id, p, take)
+        if rite_draft is not None:
+            return rite_draft
+
+        if getattr(p, "worship_now", False) and p.self_location == getattr(p, "faith_home", None):
+            return take(Intent(action="worship"),
+                        "service is in session — stay with the congregation", 0.8)
+
+        session = getattr(p, "session_faith", None)
+        if session and (p.self_faith == "unaffiliated" or p.self_piety < 0.22):
+            if getattr(p, "session_present", 0) >= 2:
+                return take(Intent(action="convert", args={"faith": session}),
+                            "a living service is receiving newcomers", 0.62)
+
+        if (getattr(p, "worship_now", False) and getattr(p, "faith_home", None)
+                and p.self_location != p.faith_home
+                and p.faith_home in (p.reachable or [p.faith_home])):
+            reason = ("lead the service — walk to the " + p.faith_home
+                      if getattr(p, "is_faith_leader", False)
+                      else f"service hour — walk to the {p.faith_home}")
+            return take(Intent(action="move", args={"destination": p.faith_home}),
+                        reason, 0.84 if getattr(p, "is_faith_leader", False) else 0.76)
 
         # Priority 3: occasionally propose a rule -- either a NEW one
         # (curfew/wealth_tax) or, if something is already enacted, a
@@ -344,7 +406,7 @@ class RuleBasedDecider:
             return take(Intent(action="move", args={"destination": home}),
                         f"piety — gather with the {p.self_faith_name}", 0.58)
 
-        WANDERLUST_CHANCE = 0.12
+        WANDERLUST_CHANCE = 0.06 if getattr(p, "worship_now", False) else 0.12
         if self.rng.random() < WANDERLUST_CHANCE:
             dest = self._next_stop(p)
             return take(Intent(action="move", args={"destination": dest}),
@@ -430,10 +492,23 @@ class RuleBasedDecider:
         Bank run: hoard, refuse strangers, talk people down at the tavern.
         Intensity scales how urgently they abandon the usual day.
         """
-        if not p.active_crises:
+        if not p.active_crises and getattr(p, "self_solvency", "ok") == "ok":
             return None
         intensity = p.crisis_intensity or {}
         mag = max((intensity.get(tag, 0.5) for tag in p.active_crises), default=0.5)
+        if getattr(p, "self_solvency", "ok") == "bankrupt":
+            if p.self_location != "farm" and getattr(p, "self_livelihood", "") == "farmer":
+                return take(Intent(action="move", args={"destination": "farm"}),
+                            "bankrupt farmer — get back to the fields", 0.9)
+            if p.self_location in ("farm", "workshop", "market"):
+                return take(Intent(action="work", args={}),
+                            "bankrupt — work whatever is left", 0.88)
+            dest = "market" if getattr(p, "self_livelihood", "") == "trader" else "farm"
+            if dest != p.self_location:
+                return take(Intent(action="move", args={"destination": dest}),
+                            "bankrupt — find a wage", 0.86)
+        if not p.active_crises:
+            return None
         if self.rng.random() > min(0.92, 0.45 + mag * 0.55):
             return None
         if "famine" in p.active_crises or (
@@ -661,16 +736,43 @@ class RuleBasedDecider:
             yes_probability = base_yes_probability
 
         target = (proposal.get("rule_args") or {}).get("target_agent")
-        if target == agent_id:
+        if target == agent_id and proposal.get("rule_type") != "elect":
             yes_probability = 0.05
         elif proposal.get("rule_type") == "expel" and any(n.get("id") == target for n in p.notorious):
             yes_probability = min(0.95, yes_probability + 0.28)
         elif proposal.get("rule_type") == "welcome" and any(n.get("id") == target for n in p.newcomers):
             yes_probability = min(0.95, yes_probability + 0.2)
+        elif proposal.get("rule_type") == "impeach":
+            if p.is_leader or target == agent_id:
+                yes_probability = 0.08
+            else:
+                if p.active_crises:
+                    yes_probability = min(0.95, yes_probability + 0.22)
+                if getattr(p, "leader_solvency", "ok") in ("strained", "bankrupt"):
+                    yes_probability = min(0.95, yes_probability + 0.24)
+                if getattr(p, "impeach_justified", False):
+                    yes_probability = min(0.95, yes_probability + 0.10)
+        elif proposal.get("rule_type") == "elect":
+            if target == agent_id:
+                yes_probability = min(0.9, yes_probability + 0.12)
+            if any(c.get("id") == target for c in (getattr(p, "succession_candidates", None) or [])):
+                yes_probability = min(0.95, yes_probability + 0.18)
+        elif proposal.get("rule_type") in ("festival", "water_blessing"):
+            yes_probability = min(0.95, yes_probability + 0.14 * p.self_piety)
+        if proposal.get("rule_type") in ("wealth_tax", "water_blessing"):
+            if getattr(p, "self_solvency", "ok") == "bankrupt":
+                yes_probability = min(0.95, yes_probability + 0.28)
+            elif getattr(p, "self_solvency", "ok") == "strained":
+                yes_probability = min(0.95, yes_probability + 0.16)
+            if getattr(p, "self_livelihood", "") == "farmer" and proposal.get("rule_type") == "water_blessing":
+                yes_probability = min(0.95, yes_probability + 0.18)
         elif proposal.get("emergency") or (proposal.get("vote_rules") or {}).get("emergency"):
             yes_probability = min(0.9, yes_probability + 0.12)
         if p.is_leader and proposal.get("proposed_by") == agent_id:
             yes_probability = min(0.95, yes_probability + 0.15)
+        if getattr(p, "is_faith_leader", False) and proposal.get("proposed_by") == agent_id:
+            if proposal.get("rule_type") in ("festival", "water_blessing"):
+                yes_probability = min(0.95, yes_probability + 0.12)
         from faith import same_faith
         if same_faith(p.self_faith, p.proposer_faith):
             yes_probability = min(0.95, yes_probability + 0.16 * p.self_piety)
@@ -686,9 +788,12 @@ class RuleBasedDecider:
             return None
         deadlock = any(prop.get("deadlock") for prop in p.open_proposals)
         sponsor = any(prop.get("proposed_by") == agent_id for prop in p.open_proposals)
-        if not (p.is_leader or sponsor or deadlock or p.active_crises):
+        rite_open = any(prop.get("rule_type") in ("festival", "water_blessing")
+                        for prop in p.open_proposals)
+        faith_lead = getattr(p, "is_faith_leader", False) and rite_open
+        if not (p.is_leader or faith_lead or sponsor or deadlock or p.active_crises):
             return None
-        if not (p.is_leader or sponsor) and not deadlock:
+        if not (p.is_leader or faith_lead or sponsor) and not deadlock:
             return None
         here = [t for t in p.lobby_targets if t.get("id") in p.location_agents]
         pick = here[0] if here else p.lobby_targets[0]
@@ -707,6 +812,69 @@ class RuleBasedDecider:
             args={"to": pick["id"], "proposal_id": pick["proposal_id"], "lean": lean},
             say=line,
         ), "lobby one member at a time", 0.83)
+
+    def _maybe_succession(self, agent_id: str, p: Perception, take):
+        """Impeach a failing lead in a crisis; elect when the chair is empty."""
+        if p.expelled or not p.can_vote:
+            return None
+        open_types = {prop.get("rule_type") for prop in p.open_proposals}
+        vacant = getattr(p, "office_vacant", False) or not p.town_leader_id
+        if vacant:
+            if "elect" in open_types:
+                return None
+            if p.self_location != "town_hall":
+                return take(Intent(action="move", args={"destination": "town_hall"}),
+                            "the chair is vacant — go name a leader", 0.86)
+            cands = list(getattr(p, "succession_candidates", None) or [])
+            pick = next((c for c in cands if c.get("id")), None)
+            if pick is None:
+                pick = {"id": agent_id, "name": None}
+            name = pick.get("name") or pick["id"]
+            return take(Intent(action="propose_rule", args={
+                "rule_type": "elect",
+                "rule_args": {"target_agent": pick["id"]},
+            }), f"elect {name} to the vacant chair", 0.85)
+        if "impeach" in open_types or p.is_leader:
+            return None
+        if not getattr(p, "impeach_justified", False):
+            return None
+        if p.self_location != "town_hall":
+            chance = 0.58 if p.active_crises else 0.28
+            if getattr(p, "leader_solvency", "ok") in ("strained", "bankrupt"):
+                chance = max(chance, 0.62)
+            if self.rng.random() > chance:
+                return None
+            return take(Intent(action="move", args={"destination": "town_hall"}),
+                        "the hall may unseat the leader", 0.8)
+        return take(Intent(action="propose_rule", args={
+            "rule_type": "impeach",
+            "rule_args": {"target_agent": p.town_leader_id},
+        }), f"impeach {p.town_leader_name or 'the leader'}", 0.82)
+
+    def _maybe_rite(self, agent_id: str, p: Perception, take):
+        """Festival and water blessing — civic rites, not invented doctrine."""
+        if not p.can_vote or p.open_proposals:
+            return None
+        home = getattr(p, "faith_home", None)
+        if p.self_location not in {home, "town_hall", "chapel"}:
+            return None
+        lead = getattr(p, "is_faith_leader", False)
+        if getattr(p, "water_blessing", False) is False and p.self_piety >= 0.35:
+            crises = p.active_crises or set()
+            ruined = getattr(p, "self_solvency", "ok") in ("strained", "bankrupt")
+            farmer = getattr(p, "self_livelihood", "") == "farmer"
+            if ("flood" in crises or "famine" in crises or (ruined and farmer)) and self.rng.random() < (0.48 if lead else 0.32):
+                return take(Intent(action="propose_rule", args={
+                    "rule_type": "water_blessing", "rule_args": {},
+                }), "propose a water blessing for the fields", 0.78 if lead else 0.74)
+        fest_chance = (0.22 if lead else 0.12) * p.self_piety
+        if (home and p.self_piety >= 0.45 and not getattr(p, "festival_faith", None)
+                and self.rng.random() < fest_chance):
+            return take(Intent(action="propose_rule", args={
+                "rule_type": "festival",
+                "rule_args": {"faith": p.self_faith},
+            }), f"propose a {p.self_faith_name} festival", 0.76 if lead else 0.7)
+        return None
 
     def _maybe_sanction(self, agent_id: str, p: Perception, take):
         """Notorious names get a suspend or expel motion; newcomers get a welcome."""
@@ -779,6 +947,30 @@ class RuleBasedDecider:
                 action="gossip",
                 args={"about": kin, "tone": "praise"},
                 say=f"{kin_name} stood with the {p.self_faith_name} when the hall wavered",
+            )
+        if getattr(p, "is_faith_leader", False) and getattr(p, "worship_now", False) and self.rng.random() < 0.4:
+            return Intent(
+                action="speak",
+                args={"to": other},
+                say=f"{other_name}, stay with the {p.self_faith_name} — the service is not finished.",
+            )
+        if getattr(p, "faith_leader_name", None) and getattr(p, "worship_now", False) and self.rng.random() < 0.28:
+            return Intent(
+                action="speak",
+                args={"to": other},
+                say=f"{p.faith_leader_name} is holding the {p.self_faith_name} together. Walk with us.",
+            )
+        if getattr(p, "office_vacant", False) and self.rng.random() < 0.4:
+            return Intent(
+                action="gossip",
+                args={"about": other, "tone": "accuse"},
+                say="the chair is empty — we vote a leader in before the next crisis eats us",
+            )
+        if p.town_leader_name and getattr(p, "impeach_justified", False) and self.rng.random() < 0.28:
+            return Intent(
+                action="gossip",
+                args={"about": p.town_leader_id, "tone": "scandal"},
+                say=f"{p.town_leader_name} should step down before the hall impeaches them",
             )
         if p.town_leader_name and p.active_crises and self.rng.random() < 0.35:
             return Intent(

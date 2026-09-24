@@ -54,6 +54,7 @@ from town_factory import build_agents, build_world
 
 import chaos
 import economy
+import faith
 import governance
 import inventions
 
@@ -108,6 +109,7 @@ class SimulationBroadcaster:
         chaos.reset_campaigns()
         chaos.reset_corruption_cooldown()
         inventions.reset()
+        faith.reset()
 
         world = build_world()
         agents = build_agents(rng, NUM_AGENTS)

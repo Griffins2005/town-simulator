@@ -20,17 +20,19 @@ from agent import Agent
 from world import World
 
 DOMAIN_SOCIAL = ("speak", "gossip", "influence_campaign", "campaign_ended",
-                 "call_for_expulsion", "notoriety")
+                 "call_for_expulsion", "notoriety", "worship", "converted", "worship_session",
+                 "bankrupt", "going_bankrupt", "recovered")
 DOMAIN_POLITICAL = (
     "vote_cast", "rule_proposed", "rule_repealed", "proposal_closed",
     "faction_joined", "faction_formed", "lobby_succeeded", "lobby_failed",
     "member_expelled", "member_arrived", "member_welcomed", "member_restored", "vote_suspended",
-    "vote_rights_restored", "proposal_deadlocked",
+    "vote_rights_restored", "proposal_deadlocked", "festival_ended", "faith_leader",
+    "leader_seated", "leader_elected", "leader_impeached", "leader_stepped_down",
 )
 DOMAIN_ECONOMIC = (
     "trade_completed", "trade_rejected", "trade_failed_insufficient_funds",
     "work", "corruption_scandal", "market_shock", "crisis_started", "crisis_ended",
-    "invention", "invention_adopted",
+    "invention", "invention_adopted", "bankrupt", "going_bankrupt", "recovered",
 )
 
 
@@ -198,6 +200,67 @@ def build_public_headlines(world: World, agents: dict[str, Agent], limit: int = 
             item = {
                 "about": who,
                 "text": f"{names.get(event.get('agent'), event.get('agent'))} lobbied {names.get(who, who)} to vote {event.get('lean')}",
+            }
+        elif kind == "converted":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": f"{event.get('name') or names.get(who, who)} joined the {event.get('to')}",
+            }
+        elif kind == "worship_session":
+            item = {
+                "about": None,
+                "text": f"{event.get('name') or event.get('faith')} is in session at the {event.get('location')}",
+            }
+        elif kind == "festival_ended":
+            item = {"about": None, "text": f"the {event.get('faith')} festival has ended"}
+        elif kind == "bankrupt":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": f"{event.get('name') or names.get(who, who)} went bankrupt ({event.get('livelihood')})",
+            }
+        elif kind == "going_bankrupt":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": f"{event.get('name') or names.get(who, who)} is going bankrupt",
+            }
+        elif kind == "recovered":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": f"{event.get('name') or names.get(who, who)} recovered from {event.get('from_')}",
+            }
+        elif kind == "faith_leader":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": f"{event.get('agent_name') or names.get(who, who)} now leads the {event.get('name') or event.get('faith')}",
+            }
+        elif kind == "leader_seated":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": f"{event.get('name') or names.get(who, who)} is seated as town leader ({event.get('how')})",
+            }
+        elif kind == "leader_elected":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": f"{event.get('name') or names.get(who, who)} was elected town leader",
+            }
+        elif kind == "leader_impeached":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": f"{event.get('name') or names.get(who, who)} was impeached",
+            }
+        elif kind == "leader_stepped_down":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": f"{event.get('name') or names.get(who, who)} stepped down ({event.get('reason')})",
             }
         elif kind == "proposal_deadlocked":
             item = {

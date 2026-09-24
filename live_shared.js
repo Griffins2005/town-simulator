@@ -27,7 +27,7 @@ const FAITH_COLOR = {
 };
 let mapView = 'town';
 const mapLayers = {
-  residents: true, relationships: false, factions: true,
+  residents: true, relationships: false, factions: true, faith: true,
   crossings: false, anomalies: false, terrain: false, water: true
 };
 let memFilter = 'all';
@@ -69,13 +69,27 @@ function faithLabel(id, frame) {
   const a = AGENTS[id] || {};
   return a.faith_name || FAITH_NAME[faithOf(id, frame)] || 'Unaffiliated';
 }
+function faithLeaders(frame) {
+  return ((frame && frame.faith && frame.faith.leaders) || []);
+}
+const LIVELIHOOD_NAME = { farmer: 'Farmer', trader: 'Trader', laborer: 'Laborer' };
+function livelihoodLabel(job) {
+  return LIVELIHOOD_NAME[job] || 'Laborer';
+}
+function isFaithLeader(id, frame) {
+  return faithLeaders(frame).some(row => row.id === id);
+}
+function faithLeaderName(faithId, frame) {
+  const row = faithLeaders(frame).find(r => r.faith === faithId);
+  return row ? (row.name || nameOf(row.id)) : '';
+}
 function classifyMemory(text) {
   const t = String(text || '').toLowerCase();
   if (/invent|pump|adopt|workshop|catalog/.test(t)) return 'inventions';
   if (/vote|proposal|lobby|faction|curfew|repeal|expel|suspend|rule_|welcome|deadlock/.test(t)) return 'political';
   if (/unrest|protest|road_closed|bridge|greenway/.test(t)) return 'political';
   if (/flood|famine|food|trade|money|work|demurrage|tax|bank/.test(t)) return 'economic';
-  if (/gossip|speak|chapel|faith|piety|heard_|relationship|welcome/.test(t)) return 'social';
+  if (/gossip|speak|chapel|faith|piety|worship|convert|festival|heard_|relationship|welcome/.test(t)) return 'social';
   return 'social';
 }
 function roleOf(id) {
@@ -94,6 +108,8 @@ function lawCount(rules, enacted) {
   let n = 0;
   if (rules && ('wealth_tax_rate' in rules)) n++;
   if (rules && ('curfew_after_tick_of_day' in rules)) n++;
+  if (rules && rules.festival_faith) n++;
+  if (rules && rules.water_blessing) n++;
   return n;
 }
 function happiness(frame) {
@@ -109,15 +125,21 @@ function notableKind(kind) {
   return ['crisis_started','crisis_ended','corruption_scandal','faction_formed','influence_campaign',
           'campaign_ended','rule_proposed','rule_repealed','proposal_closed','market_shock',
           'invention','invention_adopted','rule_enacted','member_expelled','member_arrived','member_welcomed',
-          'vote_suspended','lobby_succeeded','proposal_deadlocked','notoriety'].includes(kind);
+          'vote_suspended','lobby_succeeded','proposal_deadlocked','notoriety',
+          'converted','worship_session','festival_ended','faith_leader',
+          'leader_seated','leader_elected','leader_impeached','leader_stepped_down',
+          'bankrupt','going_bankrupt','recovered'].includes(kind);
 }
 function eventTone(kind) {
   if (['influence_campaign','gossip','campaign_ended','call_for_expulsion','notoriety'].includes(kind)) return 'whisper';
   if (['invention','invention_adopted'].includes(kind)) return 'invent';
   if (['rule_proposed','rule_repealed','proposal_closed','vote_cast','rule_enacted',
        'lobby_succeeded','lobby_failed','member_expelled','member_arrived','member_welcomed','member_restored',
-       'vote_suspended','vote_rights_restored','proposal_deadlocked'].includes(kind)) return 'law';
-  if (['crisis_started','crisis_ended','corruption_scandal','market_shock'].includes(kind)) return 'crisis';
+       'vote_suspended','vote_rights_restored','proposal_deadlocked','festival_ended',
+       'leader_seated','leader_elected','leader_impeached','leader_stepped_down'].includes(kind)) return 'law';
+  if (['worship', 'converted', 'worship_session', 'faith_leader'].includes(kind)) return 'whisper';
+  if (['crisis_started','crisis_ended','corruption_scandal','market_shock',
+       'bankrupt','going_bankrupt'].includes(kind)) return 'crisis';
   return '';
 }
 function eventTitle(kind) {
@@ -135,6 +157,18 @@ function eventTitle(kind) {
   if (kind === 'crisis_started') return 'Crisis';
   if (kind === 'market_shock') return 'Market shock';
   if (kind === 'faction_formed') return 'Faction formed';
+  if (kind === 'worship') return 'Worship';
+  if (kind === 'converted') return 'Converted';
+  if (kind === 'worship_session') return 'Service';
+  if (kind === 'festival_ended') return 'Festival ended';
+  if (kind === 'faith_leader') return 'Faith leader';
+  if (kind === 'leader_seated') return 'Leader seated';
+  if (kind === 'leader_elected') return 'Leader elected';
+  if (kind === 'leader_impeached') return 'Impeached';
+  if (kind === 'leader_stepped_down') return 'Leader stepped down';
+  if (kind === 'bankrupt') return 'Bankrupt';
+  if (kind === 'going_bankrupt') return 'Going bankrupt';
+  if (kind === 'recovered') return 'Recovered';
   return String(kind || '').replace(/_/g, ' ');
 }
 function describeEvent(e) {
@@ -176,6 +210,18 @@ function describeEvent(e) {
   if (e.kind === 'invention_adopted') return nameOf(e.agent) + ' adopted ' + escapeHtml(e.name || '');
   if (e.kind === 'market_shock') return (e.shock_kind || 'shock') + ' at the ' + e.location;
   if (e.kind === 'work') return nameOf(e.agent) + ' works';
+  if (e.kind === 'worship') return nameOf(e.agent) + ' worships with the ' + (FAITH_NAME[e.faith] || e.faith || 'congregation');
+  if (e.kind === 'converted') return (e.name || nameOf(e.agent)) + ' joins the ' + (FAITH_NAME[e.to] || e.to || 'congregation');
+  if (e.kind === 'worship_session') return (e.name || FAITH_NAME[e.faith] || e.faith) + ' in session at the ' + String(e.location || '').replace('_', ' ');
+  if (e.kind === 'festival_ended') return (FAITH_NAME[e.faith] || e.faith) + ' festival ends';
+  if (e.kind === 'faith_leader') return (e.agent_name || nameOf(e.agent)) + ' leads the ' + (e.name || FAITH_NAME[e.faith] || e.faith);
+  if (e.kind === 'leader_seated') return (e.name || nameOf(e.agent)) + ' is seated as town leader' + (e.how ? ' (' + e.how + ')' : '');
+  if (e.kind === 'leader_elected') return (e.name || nameOf(e.agent)) + ' is elected town leader';
+  if (e.kind === 'leader_impeached') return (e.name || nameOf(e.agent)) + ' is impeached';
+  if (e.kind === 'leader_stepped_down') return (e.name || nameOf(e.agent)) + ' steps down' + (e.reason ? ' (' + e.reason + ')' : '');
+  if (e.kind === 'bankrupt') return (e.name || nameOf(e.agent)) + ' is bankrupt' + (e.livelihood ? ' (' + e.livelihood + ')' : '') + ' — still seated';
+  if (e.kind === 'going_bankrupt') return (e.name || nameOf(e.agent)) + ' is going bankrupt';
+  if (e.kind === 'recovered') return (e.name || nameOf(e.agent)) + ' recovered';
   return String(e.kind || '').replace(/_/g, ' ');
 }
 function svgEl(name, attrs) {
@@ -213,7 +259,7 @@ function updateHeader(frame) {
   set('propLabel', (frame.open_proposals || []).length);
   const lead = frame.town_leader_id;
   const leadEl = document.getElementById('leaderLabel');
-  if (leadEl) leadEl.textContent = lead ? nameOf(lead).split(' ')[0] : '—';
+  if (leadEl) leadEl.textContent = lead ? nameOf(lead).split(' ')[0] : (frame.office_vacant ? 'vacant' : '—');
   const crises = frame.active_crises || [];
   const levels = frame.crisis_intensity || {};
   const crisisBits = crises.map((c) => {

@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 
 import analytics
+import economy
 import faith
 import geography
 import governance
@@ -206,8 +207,13 @@ class Recorder:
                 "expelled": agent.expelled,
                 "can_vote": agent.can_vote(world.tick),
                 "official": agent.official_track_record,
+                "pastoral": getattr(agent, "pastoral_track_record", 0),
                 "faith": getattr(agent.persona, "faith", "unaffiliated"),
                 "piety": round(getattr(agent.persona, "piety", 0.2), 3),
+                "livelihood": getattr(agent.persona, "livelihood", "laborer"),
+                "solvency": getattr(agent, "solvency", "ok"),
+                "can_vote_civic": agent.can_vote_on(world.tick, "curfew"),
+                "can_vote_economy": agent.can_vote_on(world.tick, "wealth_tax"),
                 "memories": [m.as_text() for m in agent.memory.recent(16)],
             }
         metrics = analytics.compute_metrics(world, self.engine.agents, new_events)
@@ -222,7 +228,7 @@ class Recorder:
             "trade_completed": metrics["trade_completed"],
         })
         del self._metrics_window[:-30]
-        leader = governance.town_leader(self.engine.agents)
+        leader = governance.town_leader(self.engine.agents, world)
         return {
             "tick": tick,
             "agents": agents_frame,
@@ -244,10 +250,15 @@ class Recorder:
             "inventions": list(world.inventions),
             "open_proposals": governance.open_proposals_snapshot(world, self.engine.agents),
             "town_leader_id": leader.agent_id if leader else None,
+            "office_vacant": leader is None,
+            "leader_solvency": getattr(leader, "solvency", "ok") if leader else None,
+            "succession_candidates": governance.succession_candidates(self.engine.agents, world),
             "decision_records": list(self.engine.last_decision_records),
             "metrics": metrics,
             "relationship_edges": analytics.relationship_edges(self.engine.agents),
             "geography": geography.snapshot(world),
+            "faith": faith.snapshot(world, self.engine.agents),
+            "economy": economy.snapshot(world, self.engine.agents),
         }
 
     def agents_static_snapshot(self) -> dict:
@@ -271,6 +282,8 @@ class Recorder:
                 },
                 "faith": getattr(agent.persona, "faith", "unaffiliated"),
                 "faith_name": faith.faith_name(getattr(agent.persona, "faith", None)),
+                "livelihood": getattr(agent.persona, "livelihood", "laborer"),
+                "livelihood_name": economy.livelihood_name(getattr(agent.persona, "livelihood", None)),
                 # Recorded so the visualizer can show "this agent's mind
                 # was an LLM" vs "rule-based" in its detail popup,
                 # without the recorder needing to import llm_decider.py

@@ -60,6 +60,70 @@ DEFAULT_RESOURCE_KIND = "food"
 RESOURCE_REGEN_RATE = 0.3
 RESOURCE_CAP = 40.0
 
+# Livelihoods are how a crisis chooses its victims. Farmers take flood
+# and famine; traders take a bank run; laborers take unrest. Bankruptcy
+# is insolvency on this ledger — not a lost seat in the hall.
+LIVELIHOODS = {
+    "farmer": "Farmer",
+    "trader": "Trader",
+    "laborer": "Laborer",
+}
+ECONOMIC_RULES = ("wealth_tax", "water_blessing")
+BANKRUPT_MONEY = 0.8
+BANKRUPT_FOOD = 0.45
+STRAINED_MONEY = 4.0
+
+
+def assign_livelihood(index: int, faith_id: str | None = None) -> str:
+    if faith_id == "old_ways":
+        return "farmer"
+    if faith_id == "hall_creed":
+        return ("trader", "laborer")[index % 2]
+    return ("trader", "laborer", "farmer")[index % 3]
+
+
+def livelihood_name(livelihood: str | None) -> str:
+    return LIVELIHOODS.get(livelihood or "laborer", "Laborer")
+
+
+def exposure(agent: Agent, tag: str) -> float:
+    """How hard this crisis hits this person, in [0, 1]."""
+    job = getattr(agent.persona, "livelihood", "laborer")
+    here = agent.location
+    if tag == "flood":
+        hit = 1.0 if job == "farmer" else 0.25 if job == "trader" else 0.35
+        if here in ("farm", "park"):
+            hit = max(hit, 0.75)
+        return hit
+    if tag == "famine":
+        hit = 1.0 if job == "farmer" else 0.55 if job == "laborer" else 0.4
+        if here == "farm":
+            hit = max(hit, 0.7)
+        return hit
+    if tag == "bank_run":
+        hit = 1.0 if job == "trader" else 0.25 if job == "farmer" else 0.45
+        if here == "bank" or agent.money >= 12:
+            hit = max(hit, 0.8)
+        return hit
+    if tag == "unrest":
+        hit = 1.0 if job == "laborer" else 0.55 if job == "trader" else 0.3
+        if here in ("market", "tavern", "park", "town_hall"):
+            hit = max(hit, 0.65)
+        return hit
+    return 0.2
+
+
+def work_yield_now(world: World, actor: Agent) -> float:
+    """Harvest shrinks in a flood or famine, especially for farmers."""
+    yield_amt = WORK_YIELD
+    mag = float((world.crisis_intensity or {}).get("flood", 0) or 0)
+    if mag and actor.location == "farm":
+        yield_amt *= max(0.15, 1.0 - 0.55 * mag)
+    mag = float((world.crisis_intensity or {}).get("famine", 0) or 0)
+    if mag and actor.location == "farm":
+        yield_amt *= max(0.2, 1.0 - 0.4 * mag)
+    return round(yield_amt, 3)
+
 # Demurrage rate: a small percentage of EVERY agent's money is taxed
 # away each tick, regardless of governance, and routed into the town
 # treasury (see apply_demurrage below -- an earlier version destroyed
@@ -153,6 +217,9 @@ def regenerate_resources(world) -> None:
         if current < RESOURCE_CAP:
             import inventions
             bonus = inventions.farm_regen_bonus(world) if loc.name == "farm" else 0.0
+            if loc.name == "farm":
+                import faith
+                bonus += faith.water_blessing_bonus(world)
             loc.resources[DEFAULT_RESOURCE_KIND] = min(
                 RESOURCE_CAP, current + RESOURCE_REGEN_RATE + bonus
             )
@@ -180,16 +247,17 @@ def work(actor: Agent, world: World):
     # the top" in this codebase, and it's confined to this single spot.
 
     loc = world.get_location(actor.location)
+    gained = work_yield_now(world, actor)
     available = loc.resources.get(DEFAULT_RESOURCE_KIND, 0.0)
-    if available < WORK_YIELD:
+    if available < gained or gained <= 0:
         return ActionResult(False, f"no {DEFAULT_RESOURCE_KIND} left to gather at {actor.location}")
 
-    loc.resources[DEFAULT_RESOURCE_KIND] = available - WORK_YIELD
-    actor.inventory[DEFAULT_RESOURCE_KIND] = actor.inventory.get(DEFAULT_RESOURCE_KIND, 0.0) + WORK_YIELD
+    loc.resources[DEFAULT_RESOURCE_KIND] = available - gained
+    actor.inventory[DEFAULT_RESOURCE_KIND] = actor.inventory.get(DEFAULT_RESOURCE_KIND, 0.0) + gained
     actor.memory.add(MemoryEntry(world.tick, "worked", None,
-                                 {"location": actor.location, "gained": WORK_YIELD}))
-    world.log_event("work", agent=actor.agent_id, location=actor.location, gained=WORK_YIELD)
-    return ActionResult(True, f"gathered {WORK_YIELD} {DEFAULT_RESOURCE_KIND}")
+                                 {"location": actor.location, "gained": gained}))
+    world.log_event("work", agent=actor.agent_id, location=actor.location, gained=gained)
+    return ActionResult(True, f"gathered {gained} {DEFAULT_RESOURCE_KIND}")
 
 
 def create_offer(actor: Agent, target: Agent, args: dict):
@@ -364,3 +432,106 @@ def reset_offers() -> None:
     (e.g. in a test suite) would leak offers between runs.
     """
     _pending_offers.clear()
+
+
+def apply_crisis_pressure(world: World, agents: dict[str, Agent], rng) -> None:
+    """Clock: ruin the people a crisis actually lands on, then mark solvency.
+
+    Flood and famine take farmers first. A bank run takes traders and
+    large balances. Unrest takes laborers in the street. Bankruptcy is
+    recorded here; the hall does not take their vote for it.
+    """
+    intensities = world.crisis_intensity or {}
+    if intensities:
+        for agent in agents.values():
+            money_cut = 0.0
+            food_cut = 0.0
+            for tag, mag in intensities.items():
+                exp = exposure(agent, tag)
+                if exp <= 0.05:
+                    continue
+                mag = float(mag or 0)
+                if tag == "flood":
+                    money_cut += agent.money * 0.05 * mag * exp
+                    food_cut += 0.18 * mag * exp
+                elif tag == "famine":
+                    money_cut += agent.money * 0.03 * mag * exp
+                    food_cut += 0.22 * mag * exp
+                elif tag == "bank_run":
+                    money_cut += agent.money * 0.045 * mag * exp
+                elif tag == "unrest":
+                    money_cut += agent.money * 0.035 * mag * exp
+                    if rng.random() < 0.15 * mag * exp:
+                        agent.reputation = max(0.0, agent.reputation - 0.02 * mag)
+            if money_cut:
+                agent.money = round(max(0.0, agent.money - money_cut), 2)
+            if food_cut:
+                food = agent.inventory.get("food", 0.0)
+                agent.inventory["food"] = round(max(0.0, food - food_cut), 2)
+    _update_solvency(world, agents)
+
+
+def _update_solvency(world: World, agents: dict[str, Agent]) -> None:
+    for agent in agents.values():
+        food = float(agent.inventory.get("food", 0.0))
+        money = float(agent.money)
+        prev = getattr(agent, "solvency", "ok") or "ok"
+        if money < BANKRUPT_MONEY and food < BANKRUPT_FOOD:
+            nxt = "bankrupt"
+        elif money < STRAINED_MONEY or food < 0.8:
+            nxt = "strained"
+        else:
+            nxt = "ok"
+        if prev == "bankrupt" and nxt != "ok" and money < 3.0:
+            nxt = "bankrupt" if money < 2.0 else "strained"
+        if nxt == prev:
+            continue
+        agent.solvency = nxt
+        job = getattr(agent.persona, "livelihood", "laborer")
+        if nxt == "bankrupt":
+            agent.reputation = max(0.05, agent.reputation - 0.08)
+            agent.memory.add(MemoryEntry(world.tick, "went_bankrupt", None, {"livelihood": job}))
+            world.log_event("bankrupt", agent=agent.agent_id, name=agent.persona.name,
+                            livelihood=job, money=round(money, 2))
+            world.notice_board.append({
+                "tick": world.tick, "from": "market", "about": agent.agent_id,
+                "text": f"{agent.persona.name} is bankrupt — still seated on both ballots",
+            })
+            del world.notice_board[:-8]
+        elif nxt == "strained" and prev == "ok":
+            agent.memory.add(MemoryEntry(world.tick, "going_bankrupt", None, {"livelihood": job}))
+            world.log_event("going_bankrupt", agent=agent.agent_id, name=agent.persona.name,
+                            livelihood=job, money=round(money, 2))
+        elif prev in ("bankrupt", "strained") and nxt == "ok":
+            agent.memory.add(MemoryEntry(world.tick, "recovered", None, {"from": prev}))
+            world.log_event("recovered", agent=agent.agent_id, name=agent.persona.name,
+                            from_=prev)
+
+
+def snapshot(world: World, agents: dict[str, Agent]) -> dict:
+    """Frame payload: who is ruined, who still holds each ballot."""
+    by_job = {k: 0 for k in LIVELIHOODS}
+    by_solvency = {"ok": 0, "strained": 0, "bankrupt": 0}
+    ruined = []
+    for agent in agents.values():
+        job = getattr(agent.persona, "livelihood", "laborer")
+        by_job[job] = by_job.get(job, 0) + 1
+        sol = getattr(agent, "solvency", "ok") or "ok"
+        by_solvency[sol] = by_solvency.get(sol, 0) + 1
+        if sol in ("strained", "bankrupt"):
+            ruined.append({
+                "id": agent.agent_id,
+                "name": agent.persona.name,
+                "livelihood": job,
+                "solvency": sol,
+                "money": round(agent.money, 2),
+                "can_vote_civic": agent.can_vote_on(world.tick, "curfew"),
+                "can_vote_economy": agent.can_vote_on(world.tick, "wealth_tax"),
+            })
+    return {
+        "livelihoods": by_job,
+        "names": dict(LIVELIHOODS),
+        "solvency": by_solvency,
+        "ruined": ruined,
+        "economic_rules": list(ECONOMIC_RULES),
+    }

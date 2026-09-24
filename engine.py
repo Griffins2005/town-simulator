@@ -130,6 +130,7 @@ class Engine:
         # on a missing attribute.
         self._current_buzz: dict = {}
         self.last_decision_records: list[dict] = []
+        governance.ensure_office(self.world, self.agents)
 
     def step(self) -> None:
         """Advance the simulation by exactly one tick."""
@@ -244,6 +245,12 @@ class Engine:
         # that's about to be redistributed out from under them anyway.
         chaos.apply_corruption_if_opportunity(self.world, self.agents, self.rng)
 
+        # Religion clock: open a session, warm or cool piety, maybe
+        # receive a convert. After corruption so a same-tick scandal
+        # can cool that congregation; after governance.tick so a failed
+        # festival vote or a welcome is already in the log.
+        faith.tick(self.world, self.agents, self.rng)
+
         # Bank-run and unrest crisis state both read reputation/wealth
         # AFTER this tick's reputation decay and demurrage have already
         # applied, so the crisis check reflects where the town actually
@@ -251,6 +258,8 @@ class Engine:
         chaos.update_bank_run_state(self.world, self.agents)
         chaos.update_unrest_state(self.world, self.agents, self.rng)
         chaos.tick_crises(self.world, self.agents, self.rng)
+        economy.apply_crisis_pressure(self.world, self.agents, self.rng)
+        governance.review_office(self.world, self.agents)
 
         # Speculation buzz reads THIS tick's gossip events (already in
         # world.event_log from Pass 2's actions.execute calls above),
@@ -314,8 +323,13 @@ class Engine:
             return True
         if perception.lobby_targets and (
             perception.is_leader
+            or getattr(perception, "is_faith_leader", False)
             or any(prop.get("proposed_by") == agent_id for prop in perception.open_proposals)
         ):
+            return True
+        if getattr(perception, "is_faith_leader", False) and getattr(perception, "worship_now", False):
+            return True
+        if getattr(perception, "office_vacant", False) and perception.can_vote:
             return True
         if self.world.tick - last >= PASSIVE_THINK_INTERVAL:
             return True
@@ -331,7 +345,7 @@ class Engine:
         recent = [m.as_text() for m in agent.memory.recent(5)]
         relationships = {oid: agent.relationship_with(oid) for oid in others_here}
         open_props = governance.open_proposals_snapshot(self.world, self.agents)
-        leader = governance.town_leader(self.agents)
+        leader = governance.town_leader(self.agents, self.world)
         notorious = [
             {"id": a.agent_id, "name": a.persona.name, "reputation": round(a.reputation, 3)}
             for a in sorted(self.agents.values(), key=lambda x: x.reputation)
@@ -347,6 +361,10 @@ class Engine:
             sponsor = self.agents.get(open_props[0].get("proposed_by"))
             if sponsor:
                 proposer_faith = getattr(sponsor.persona, "faith", None)
+        own_faith = getattr(agent.persona, "faith", "unaffiliated")
+        session_faith = faith.session_at(agent.location, self.world)
+        faith_lead = faith.congregation_leader(self.agents, own_faith)
+        congregation_leads = faith.leaders_public(self.agents)
 
         return Perception(
             self_id=agent.agent_id,
@@ -390,10 +408,10 @@ class Engine:
             town_leader_id=leader.agent_id if leader else None,
             town_leader_name=leader.persona.name if leader else None,
             notorious=notorious,
-            lobby_targets=self._lobby_targets_for(agent, open_props, leader),
+            lobby_targets=self._lobby_targets_for(agent, open_props, leader, faith_lead),
             newcomers=newcomers,
-            self_faith=getattr(agent.persona, "faith", "unaffiliated"),
-            self_faith_name=faith.faith_name(getattr(agent.persona, "faith", None)),
+            self_faith=own_faith,
+            self_faith_name=faith.faith_name(own_faith),
             self_piety=getattr(agent.persona, "piety", 0.2),
             nearby_faiths={aid: getattr(self.agents[aid].persona, "faith", "unaffiliated")
                            for aid in others_here},
@@ -402,6 +420,34 @@ class Engine:
             reachable=geography.reachable(agent.location, self.world),
             space=geography.space(agent.location),
             blocked_streets=sorted(geography.blocked_kinds(self.world)),
+            worship_now=faith.worship_now(own_faith, self.world),
+            faith_home=faith.faith_home(own_faith),
+            congregation_size=len(faith.congregation(self.agents, own_faith)),
+            congregation_here=len(faith.present_of_faith(
+                self.agents, agent.location, own_faith)),
+            session_faith=session_faith,
+            session_present=len(faith.present_of_faith(
+                self.agents, agent.location, session_faith)) if session_faith else 0,
+            faith_census=faith.census(self.agents),
+            festival_faith=faith.festival_faith(self.world, expire=False),
+            water_blessing=bool(self.world.active_rules.get("water_blessing")),
+            is_faith_leader=bool(faith_lead and faith_lead.agent_id == agent.agent_id),
+            faith_leader_id=faith_lead.agent_id if faith_lead else None,
+            faith_leader_name=faith_lead.persona.name if faith_lead else None,
+            congregation_leaders=congregation_leads,
+            self_livelihood=getattr(agent.persona, "livelihood", "laborer"),
+            self_livelihood_name=economy.livelihood_name(getattr(agent.persona, "livelihood", None)),
+            self_solvency=getattr(agent, "solvency", "ok"),
+            can_vote_civic=agent.can_vote_on(self.world.tick, "curfew"),
+            can_vote_economy=agent.can_vote_on(self.world.tick, "wealth_tax"),
+            crisis_exposure={
+                tag: round(economy.exposure(agent, tag), 2)
+                for tag in (self.world.active_crises or set())
+            },
+            office_vacant=leader is None,
+            succession_candidates=governance.succession_candidates(self.agents, self.world),
+            impeach_justified=governance.impeach_justified(self.world, leader),
+            leader_solvency=getattr(leader, "solvency", "ok") if leader else None,
         )
 
     def _welcome_replacements(self) -> None:
@@ -415,17 +461,21 @@ class Engine:
             self.agents[newcomer.agent_id] = newcomer
             self._last_thought_tick[newcomer.agent_id] = -1
 
-    def _lobby_targets_for(self, agent: Agent, open_props: list, leader) -> list:
+    def _lobby_targets_for(self, agent: Agent, open_props: list, leader, faith_lead=None) -> list:
         """Public roll of voters a political actor might still need to convince."""
         sponsor = any(prop.get("proposed_by") == agent.agent_id for prop in open_props)
         is_lead = bool(leader and leader.agent_id == agent.agent_id)
+        is_faith_lead = bool(faith_lead and faith_lead.agent_id == agent.agent_id)
+        rite_open = any(p.get("rule_type") in ("festival", "water_blessing") for p in open_props)
         deadlock = any(prop.get("deadlock") for prop in open_props)
-        if not (sponsor or is_lead or (agent.official_track_record and (deadlock or self.world.active_crises))):
+        if not (sponsor or is_lead or (is_faith_lead and rite_open)
+                or (agent.official_track_record and (deadlock or self.world.active_crises))):
             return []
         targets = []
         for prop in open_props:
+            faith_rite = is_faith_lead and prop.get("rule_type") in ("festival", "water_blessing")
             if not (prop.get("deadlock") or self.world.active_crises
-                    or prop.get("proposed_by") == agent.agent_id):
+                    or prop.get("proposed_by") == agent.agent_id or faith_rite):
                 continue
             lean = "yes" if prop.get("proposed_by") == agent.agent_id else (
                 prop.get("votes", {}).get(agent.agent_id) or "yes"

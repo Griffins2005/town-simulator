@@ -58,6 +58,8 @@
         <div class="panel"><h2>Domain crossings</h2><svg id="domainSvg" viewBox="0 0 320 150" style="width:100%;height:160px"></svg></div>
         <div class="panel"><h2>Money by agent</h2><canvas id="moneyChart"></canvas></div>
         <div class="panel"><h2>Faction membership</h2><div id="factionBars" style="font-size:12px;line-height:1.7;color:#c5cde0"></div></div>
+        <div class="panel"><h2>Congregations</h2><div id="faithBars" style="font-size:12px;line-height:1.7;color:#c5cde0"></div></div>
+        <div class="panel"><h2>Solvency and livelihoods</h2><div id="solvencyBars" style="font-size:12px;line-height:1.7;color:#c5cde0"></div></div>
       </div>
     </div>
   </div>
@@ -278,6 +280,60 @@ function updateFactions(frame) {
   }).join('');
 }
 
+function updateSolvency(frame) {
+  const el = document.getElementById('solvencyBars');
+  if (!el) return;
+  const eco = frame.economy || {};
+  const sol = eco.solvency || {};
+  const jobs = eco.livelihoods || {};
+  const names = eco.names || LIVELIHOOD_NAME;
+  const total = Object.keys(frame.agents || {}).length || 1;
+  const solColors = { ok: '#3dce9a', strained: '#f0a14a', bankrupt: '#ef5b5b' };
+  const solBits = ['ok', 'strained', 'bankrupt'].map(k => {
+    const n = sol[k] || 0;
+    const pct = Math.round(100 * n / total);
+    return '<div style="margin-bottom:6px"><div>' + k + ' · ' + n + ' (' + pct + '%)</div>' +
+      '<div style="height:8px;background:#1b2436;border-radius:4px;overflow:hidden">' +
+      '<div style="width:' + pct + '%;height:8px;background:' + solColors[k] + '"></div></div></div>';
+  }).join('');
+  const jobBits = Object.keys(names).map(k => {
+    const n = jobs[k] || 0;
+    const pct = Math.round(100 * n / total);
+    return '<div style="margin-bottom:6px">' + escapeHtml(names[k] || k) + ' · ' + n + ' (' + pct + '%)</div>';
+  }).join('');
+  const ruined = eco.ruined || [];
+  el.innerHTML = solBits + '<div style="margin:10px 0 6px;color:#8b93a8">Livelihoods</div>' + jobBits +
+    (ruined.length ? '<div style="margin-top:8px">' + ruined.map(r =>
+      escapeHtml(r.name) + ' · ' + escapeHtml(livelihoodLabel(r.livelihood)) + ' · ' + r.solvency
+    ).join('<br>') : '');
+}
+
+function updateFaith(frame) {
+  const el = document.getElementById('faithBars');
+  if (!el) return;
+  const info = frame.faith || {};
+  const census = info.census || {};
+  const names = info.names || FAITH_NAME;
+  const ids = Object.keys(census);
+  const total = Object.keys(frame.agents || {}).length || 1;
+  if (!ids.length) { el.innerHTML = '<div style="color:#8b93a8">no census yet</div>'; return; }
+  const sessions = info.sessions || [];
+  el.innerHTML = ids.map(fid => {
+    const n = census[fid] || 0;
+    const pct = Math.round(100 * n / total);
+    const here = sessions.find(s => s.faith === fid);
+    const leadName = faithLeaderName(fid, frame);
+    return '<div style="margin-bottom:8px"><div>' + escapeHtml(names[fid] || fid) +
+      ' · ' + n + ' (' + pct + '%)' +
+      (leadName ? ' · led by ' + escapeHtml(leadName) : '') +
+      (here ? ' · in session · ' + here.present + ' present' : '') + '</div>' +
+      '<div style="height:8px;background:#1b2436;border-radius:4px;overflow:hidden">' +
+      '<div style="width:' + pct + '%;height:8px;background:' + (FAITH_COLOR[fid] || '#7a8194') + '"></div></div></div>';
+  }).join('') +
+    (info.festival ? '<div style="margin-top:8px">Festival: ' + escapeHtml(names[info.festival] || info.festival) + '</div>' : '') +
+    (info.water_blessing ? '<div>Water blessing on the farm</div>' : '');
+}
+
 function renderFrame(frame) {
   const m = frame.metrics || {};
   updateHeader(frame);
@@ -291,6 +347,8 @@ function renderFrame(frame) {
   updateHeatmap();
   updateDomains(m.domains || { social: 0, political: 0, economic: 0 }, m.crossings || []);
   updateFactions(frame);
+  updateFaith(frame);
+  updateSolvency(frame);
 }
 bootLab();
 </script>
