@@ -23,6 +23,7 @@ INVARIANT: this module is the only place `agent.money` and
 
 from __future__ import annotations
 
+import copy
 import itertools
 
 from agent import Agent
@@ -432,6 +433,21 @@ def reset_offers() -> None:
     (e.g. in a test suite) would leak offers between runs.
     """
     _pending_offers.clear()
+
+
+def export_state() -> dict:
+    used = list(_pending_offers)
+    return {
+        "pending_offers": copy.deepcopy(_pending_offers),
+        "next_id": max(used, default=0) + 1,
+    }
+
+
+def import_state(blob: dict) -> None:
+    global _offer_ids
+    reset_offers()
+    _pending_offers.update(copy.deepcopy(blob.get("pending_offers") or {}))
+    _offer_ids = itertools.count(int(blob.get("next_id") or 1))
 
 
 def apply_crisis_pressure(world: World, agents: dict[str, Agent], rng) -> None:

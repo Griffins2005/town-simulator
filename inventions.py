@@ -222,3 +222,12 @@ def try_adopt(actor: Agent, invention_id: int, world: World) -> tuple[bool, str,
 def reset() -> None:
     global _invention_ids
     _invention_ids = 0
+
+
+def export_state() -> dict:
+    return {"next_id": _invention_ids}
+
+
+def import_state(blob: dict) -> None:
+    global _invention_ids
+    _invention_ids = int(blob.get("next_id") or 0)

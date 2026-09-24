@@ -61,6 +61,7 @@ the knobs to adjust if a stress test finds the latter.
 
 from __future__ import annotations
 
+import copy
 import random
 
 from agent import Agent
@@ -730,3 +731,27 @@ def reset_factions() -> None:
     """
     _agreement_counts.clear()
     _faction_vote_history.clear()
+
+
+def export_state() -> dict:
+    return {
+        "buzz": dict(_buzz),
+        "agreement_counts": copy.deepcopy(_agreement_counts),
+        "last_corruption_tick": _last_corruption_tick,
+        "faction_vote_history": copy.deepcopy(_faction_vote_history),
+        "recent_gossip": list(_recent_gossip),
+        "active_campaigns": copy.deepcopy(_active_campaigns),
+    }
+
+
+def import_state(blob: dict) -> None:
+    global _last_corruption_tick
+    reset_buzz()
+    reset_factions()
+    reset_campaigns()
+    _buzz.update(blob.get("buzz") or {})
+    _agreement_counts.update(copy.deepcopy(blob.get("agreement_counts") or {}))
+    _last_corruption_tick = blob.get("last_corruption_tick")
+    _faction_vote_history.update(copy.deepcopy(blob.get("faction_vote_history") or {}))
+    _recent_gossip.extend(blob.get("recent_gossip") or [])
+    _active_campaigns.update(copy.deepcopy(blob.get("active_campaigns") or {}))

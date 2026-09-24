@@ -152,10 +152,37 @@
       </div>
       <div id="labExperiments" class="glass lab-panel" data-lab="experiments">
         <h2 class="panel-title">Experiments</h2>
-        <div class="tiny" style="margin-bottom:8px">Save a live tick, then compare two recorded frames from this session.</div>
+        <div class="tiny" style="margin-bottom:8px">Save the live engine. Fork it, inject one change, and compare two towns after N ticks. The watching town is not rewound.</div>
         <button type="button" id="saveCheckpointBtn">Save checkpoint</button>
         <button type="button" id="returnLiveBtn">Return to live</button>
         <div id="checkpointList" class="tiny" style="margin-top:10px">no checkpoints yet</div>
+        <div id="forkForm" class="tiny" style="margin-top:10px; display:none">
+          <div>Fork <b id="forkFromLabel">#—</b></div>
+          <label>Inject
+            <select id="forkInject">
+              <option value="unrest">unrest</option>
+              <option value="flood">flood</option>
+              <option value="famine">famine</option>
+              <option value="bank_run">bank run</option>
+              <option value="none">none (replay)</option>
+            </select>
+          </label>
+          <label>Intensity
+            <select id="forkIntensity">
+              <option value="mild">mild</option>
+              <option value="serious" selected>serious</option>
+              <option value="severe">severe</option>
+            </select>
+          </label>
+          <label>Ticks
+            <select id="forkTicks">
+              <option value="8">8</option>
+              <option value="12" selected>12</option>
+              <option value="20">20</option>
+            </select>
+          </label>
+          <button type="button" id="runForkBtn">Run experiment</button>
+        </div>
         <div id="compareBox" class="tiny" style="margin-top:10px"></div>
       </div>
     </main>
@@ -198,11 +225,11 @@
           <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">More actions</button>
           <div class="menu-pop" role="menu">
             <div class="menu-row" id="markFork" tabindex="0">Save checkpoint</div>
-            <div class="menu-row" id="compareFork" tabindex="0">Compare last two</div>
+            <div class="menu-row" id="compareFork" tabindex="0">Open experiments</div>
             <div class="menu-row" id="exportTrace" tabindex="0">Export trace</div>
           </div>
         </div>
-        <div id="tickClock"><b id="tickNum">Tick 0</b><div id="forkNote">mark two ticks to compare</div></div>
+        <div id="tickClock"><b id="tickNum">Tick 0</b><div id="forkNote">save a checkpoint to fork</div></div>
       </div>
       <div id="timelineWrap">
         <div id="timeline"></div>
@@ -282,6 +309,8 @@ const timelineEvents = [];
 let extraTab = 'profile';
 let labMode = 'observe';
 const checkpoints = [];
+let forkSourceId = null;
+let lastExperiment = null;
 let viewingCheckpoint = null;
 
 function locOf(name) {
@@ -1057,56 +1086,133 @@ function vitalsOf(frame) {
 }
 
 function saveCheckpoint() {
-  if (!latestFrame) return;
-  const snap = JSON.parse(JSON.stringify(latestFrame));
-  checkpoints.push({ id: checkpoints.length + 1, tick: snap.tick, frame: snap });
-  if (checkpoints.length > 8) checkpoints.shift();
-  const note = document.getElementById('forkNote');
-  if (note) note.textContent = 'Saved: ' + checkpoints.map(c => 't' + c.tick).join(', ');
-  renderExperiments();
+  sendControl({ cmd: 'checkpoint' }).then((res) => {
+    if (!res || res.error) return;
+    checkpoints.length = 0;
+    (res.checkpoints || []).forEach(c => checkpoints.push(c));
+    const note = document.getElementById('forkNote');
+    if (note) note.textContent = 'Saved engine at t' + res.tick + ' (#' + res.checkpoint_id + ')';
+    forkSourceId = res.checkpoint_id;
+    renderExperiments();
+  });
 }
 
 function renderExperiments() {
   const el = document.getElementById('checkpointList');
   if (!el) return;
-  if (!checkpoints.length) { el.innerHTML = 'no checkpoints yet'; return; }
-  el.innerHTML = checkpoints.map((c, i) =>
+  const form = document.getElementById('forkForm');
+  if (!checkpoints.length) {
+    el.innerHTML = 'no checkpoints yet';
+    if (form) form.style.display = 'none';
+    return;
+  }
+  el.innerHTML = checkpoints.map(c =>
     '<div class="lab-row"><b>#' + c.id + ' tick ' + c.tick + '</b>' +
-    '<button type="button" data-show="' + i + '">show on map</button> ' +
-    '<button type="button" data-keep="' + i + '">use in compare</button></div>'
+    '<button type="button" data-fork="' + c.id + '">fork from this</button></div>'
   ).join('');
-  el.querySelectorAll('[data-show]').forEach(btn => {
+  el.querySelectorAll('[data-fork]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const c = checkpoints[Number(btn.dataset.show)];
-      if (!c) return;
-      viewingCheckpoint = c.tick;
-      setLab('observe');
-      updateTown(c.frame);
-      updateHeader(c.frame);
-      const status = document.getElementById('status');
-      if (status) status.textContent = 'viewing t' + c.tick;
+      forkSourceId = Number(btn.dataset.fork);
+      if (form) form.style.display = 'block';
+      const lab = document.getElementById('forkFromLabel');
+      if (lab) lab.textContent = '#' + forkSourceId;
     });
   });
-  el.querySelectorAll('[data-keep]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      btn.classList.toggle('primary');
-      renderCompare();
-    });
-  });
+  if (form && forkSourceId) {
+    form.style.display = 'block';
+    const lab = document.getElementById('forkFromLabel');
+    if (lab) lab.textContent = '#' + forkSourceId;
+  }
+}
+
+function pair(label, a, b) {
+  const left = Array.isArray(a) ? a.join(', ') || 'none' : a;
+  const right = Array.isArray(b) ? b.join(', ') || 'none' : b;
+  const occ = (o) => o && typeof o === 'object' && !Array.isArray(o)
+    ? Object.entries(o).filter(([, n]) => n).map(([k, n]) => k.replace('_', ' ') + ' ' + n).join(', ') || 'empty'
+    : o;
+  const showL = label === 'occupancy' ? occ(a) : left;
+  const showR = label === 'occupancy' ? occ(b) : right;
+  return '<div class="lab-row"><b>' + label + '</b>control ' + showL + '<br>treatment ' + showR + '</div>';
 }
 
 function renderCompare() {
   const box = document.getElementById('compareBox');
   if (!box) return;
-  const picked = [...document.querySelectorAll('#checkpointList .primary')].map(b => checkpoints[Number(b.dataset.keep)]).filter(Boolean);
-  if (picked.length < 2) {
-    box.innerHTML = picked.length ? 'pick a second checkpoint' : '';
+  const exp = lastExperiment;
+  if (!exp || !exp.diff) {
+    box.innerHTML = '';
     return;
   }
-  const [a, b] = picked.slice(-2).map(c => vitalsOf(c.frame));
-  const row = (k) => '<div class="lab-row"><b>' + k + '</b>t' + a.tick + ': ' + a[k] + '<br>t' + b.tick + ': ' + b[k] + '</div>';
-  box.innerHTML = '<b>Compare t' + a.tick + ' vs t' + b.tick + '</b>' +
-    ['gini', 'happy', 'treasury', 'crises', 'laws', 'proposals', 'inventions', 'occupancy'].map(row).join('');
+  const d = exp.diff;
+  const shock = exp.inject ? (exp.intensity || '') + ' ' + String(exp.inject).replace('_', ' ') : 'no inject';
+  let html = '<b>t' + exp.from_tick + ' → t' + exp.to_tick + ' · ' + escapeHtml(shock) + '</b>';
+  html += pair('gini', d.gini[0], d.gini[1]);
+  html += pair('treasury', d.treasury[0], d.treasury[1]);
+  html += pair('leader', d.leader[0], d.leader[1]);
+  html += pair('crises', d.crises[0], d.crises[1]);
+  html += pair('bankrupt', d.bankrupt[0], d.bankrupt[1]);
+  html += pair('expelled', d.expelled[0], d.expelled[1]);
+  html += pair('laws', d.laws[0], d.laws[1]);
+  html += pair('occupancy', d.occupancy[0], d.occupancy[1]);
+  const ev = d.events || {};
+  const kinds = Array.from(new Set([].concat(Object.keys(ev.control || {}), Object.keys(ev.treatment || {})))).filter(k =>
+    /impeach|elect|leader_|member_expelled|crisis_|bankrupt|rule_/.test(k)
+  );
+  if (kinds.length) {
+    html += '<div class="tiny" style="margin-top:8px">EVENTS IN THE FORK</div>';
+    kinds.forEach(k => {
+      html += pair(k.replace(/_/g, ' '), (ev.control || {})[k] || 0, (ev.treatment || {})[k] || 0);
+    });
+  }
+  html += '<div style="margin-top:8px">' +
+    '<button type="button" id="showControlBtn">Show control on map</button> ' +
+    '<button type="button" id="showTreatBtn">Show treatment on map</button></div>';
+  box.innerHTML = html;
+  const show = (frame, label) => {
+    if (!frame) return;
+    viewingCheckpoint = frame.tick;
+    setLab('observe');
+    updateTown(frame);
+    updateHeader(frame);
+    const status = document.getElementById('status');
+    if (status) status.textContent = 'viewing ' + label + ' t' + frame.tick;
+  };
+  const cBtn = document.getElementById('showControlBtn');
+  const tBtn = document.getElementById('showTreatBtn');
+  if (cBtn) cBtn.addEventListener('click', () => show(exp.control, 'control'));
+  if (tBtn) tBtn.addEventListener('click', () => show(exp.treatment, 'treatment'));
+}
+
+function runFork() {
+  if (!forkSourceId) return;
+  const inject = ((document.getElementById('forkInject') || {}).value || 'unrest');
+  const intensity = ((document.getElementById('forkIntensity') || {}).value || 'serious');
+  const ticks = Number((document.getElementById('forkTicks') || {}).value || 12);
+  const box = document.getElementById('compareBox');
+  if (box) box.innerHTML = 'running fork…';
+  const btn = document.getElementById('runForkBtn');
+  if (btn) btn.disabled = true;
+  sendControl({
+    cmd: 'fork',
+    checkpoint_id: forkSourceId,
+    inject: inject === 'none' ? null : inject,
+    intensity,
+    ticks,
+  }).then((res) => {
+    if (btn) btn.disabled = false;
+    if (!res || res.error) {
+      if (box) box.innerHTML = escapeHtml((res && res.error) || 'fork failed');
+      return;
+    }
+    lastExperiment = res;
+    const note = document.getElementById('forkNote');
+    if (note) note.textContent = 'Fork t' + res.from_tick + '→' + res.to_tick + ' · live still at t' + res.tick;
+    renderCompare();
+  }).catch(() => {
+    if (btn) btn.disabled = false;
+    if (box) box.innerHTML = 'fork failed';
+  });
 }
 
 function setLab(mode) {
@@ -1210,6 +1316,8 @@ const forensicSearch = document.getElementById('forensicSearch');
 if (forensicSearch) forensicSearch.addEventListener('input', () => { if (latestFrame) renderForensicsLab(latestFrame); });
 const saveBtn = document.getElementById('saveCheckpointBtn');
 if (saveBtn) saveBtn.addEventListener('click', saveCheckpoint);
+const runForkBtn = document.getElementById('runForkBtn');
+if (runForkBtn) runForkBtn.addEventListener('click', runFork);
 const liveBtn = document.getElementById('returnLiveBtn');
 if (liveBtn) liveBtn.addEventListener('click', () => {
   viewingCheckpoint = null;
@@ -1239,18 +1347,8 @@ window.onCrisisInjected = (kind) => {
 window.saveCheckpoint = saveCheckpoint;
 window.renderCompareFromMenu = () => {
   setLab('experiments');
-  if (checkpoints.length < 2) {
-    const box = document.getElementById('compareBox');
-    if (box) box.innerHTML = 'Save two checkpoints first.';
-    return;
-  }
   renderExperiments();
-  const last = [checkpoints.length - 2, checkpoints.length - 1];
-  last.forEach(i => {
-    const btn = document.querySelector('#checkpointList [data-keep="' + i + '"]');
-    if (btn) btn.classList.add('primary');
-  });
-  renderCompare();
+  if (lastExperiment) renderCompare();
 };
 
 bootLab(() => {

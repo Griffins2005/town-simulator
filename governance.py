@@ -36,6 +36,7 @@ propose -> vote -> tally -> enact pipeline itself does not change.
 
 from __future__ import annotations
 
+import copy
 import itertools
 import math
 
@@ -893,3 +894,26 @@ def reset() -> None:
     _enacted_keys_by_proposal.clear()
     _rule_type_by_proposal.clear()
     _pending_welcomes.clear()
+
+
+def export_state() -> dict:
+    used = list(_open_proposals) + list(_enacted_keys_by_proposal)
+    return {
+        "open_proposals": copy.deepcopy(_open_proposals),
+        "enacted_keys": {pid: set(keys) for pid, keys in _enacted_keys_by_proposal.items()},
+        "rule_type": dict(_rule_type_by_proposal),
+        "pending_welcomes": list(_pending_welcomes),
+        "next_id": max(used, default=0) + 1,
+    }
+
+
+def import_state(blob: dict) -> None:
+    global _proposal_ids
+    reset()
+    _open_proposals.update(copy.deepcopy(blob.get("open_proposals") or {}))
+    for pid, keys in (blob.get("enacted_keys") or {}).items():
+        _enacted_keys_by_proposal[int(pid)] = set(keys)
+    for pid, rule_type in (blob.get("rule_type") or {}).items():
+        _rule_type_by_proposal[int(pid)] = rule_type
+    _pending_welcomes.extend(blob.get("pending_welcomes") or [])
+    _proposal_ids = itertools.count(int(blob.get("next_id") or 1))

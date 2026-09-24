@@ -48,6 +48,7 @@ _MIME = {
     ".ico": "image/x-icon",
 }
 
+import checkpoint
 from engine import Engine
 from recorder import Recorder
 from town_factory import build_agents, build_world
@@ -100,6 +101,8 @@ class SimulationBroadcaster:
         self.paused = False
         self.delay = RULE_BASED_TICK_DELAY_SECONDS
         self._control_lock = threading.Lock()
+        self._snapshots: list[dict] = []
+        self._next_snapshot = 1
 
         rng = random.Random(SEED)
         economy.reset_offers()
@@ -215,6 +218,57 @@ class SimulationBroadcaster:
                         "paused": self.paused, "delay": self.delay,
                         "tick": self.engine.world.tick, **info,
                     }
+            elif cmd == "checkpoint":
+                blob = checkpoint.capture(self.engine)
+                item = {
+                    "id": self._next_snapshot,
+                    "tick": self.engine.world.tick,
+                    "blob": blob,
+                }
+                self._next_snapshot += 1
+                self._snapshots.append(item)
+                del self._snapshots[:-8]
+                return {
+                    "paused": self.paused, "delay": self.delay,
+                    "tick": self.engine.world.tick,
+                    "checkpoint_id": item["id"],
+                    "checkpoints": [
+                        {"id": s["id"], "tick": s["tick"]} for s in self._snapshots
+                    ],
+                }
+            elif cmd == "fork":
+                snap_id = body.get("checkpoint_id") or body.get("id")
+                try:
+                    snap_id = int(snap_id)
+                except (TypeError, ValueError):
+                    snap_id = None
+                chosen = next((s for s in self._snapshots if s["id"] == snap_id), None)
+                if chosen is None and self._snapshots:
+                    chosen = self._snapshots[-1]
+                if chosen is None:
+                    return {
+                        "paused": self.paused, "delay": self.delay,
+                        "tick": self.engine.world.tick, "error": "save a checkpoint first",
+                    }
+                result = checkpoint.experiment(
+                    chosen["blob"],
+                    ticks=body.get("ticks") or checkpoint.FORK_TICKS_DEFAULT,
+                    inject=body.get("inject") or body.get("kind"),
+                    intensity=body.get("intensity", "serious"),
+                )
+                return {
+                    "paused": self.paused, "delay": self.delay,
+                    "tick": self.engine.world.tick,
+                    "checkpoint_id": chosen["id"],
+                    "from_tick": result["from_tick"],
+                    "to_tick": result["to_tick"],
+                    "ticks": result["ticks"],
+                    "inject": result["inject"],
+                    "intensity": result["intensity"],
+                    "diff": result["diff"],
+                    "control": result["control"],
+                    "treatment": result["treatment"],
+                }
             return {"paused": self.paused, "delay": self.delay, "tick": self.engine.world.tick}
 
     def stop(self) -> None:

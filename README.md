@@ -305,8 +305,9 @@ were found. Re-run it after changing `decision.py`, `economy.py`,
 - `WANDERLUST_CHANCE` is a flat constant, not a personality trait.
 - Invention kinds are a closed catalog. Agents choose among them;
   they do not author new physics.
-- Compare-marks and “change conditions” do not fork or rewind the
-  live engine.
+- Experiments save a real engine snapshot, fork a second town, and
+  compare control vs one injected change. The live engine is not
+  rewound.
 - Closing `live_server.py` drops the town. Use `record_demo.py` to
   keep a `trace.json`.
 - One simulation per server process. Two towns means two processes

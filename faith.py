@@ -156,6 +156,15 @@ def reset() -> None:
     _last_leaders.clear()
 
 
+def export_state() -> dict:
+    return {"last_leaders": dict(_last_leaders)}
+
+
+def import_state(blob: dict) -> None:
+    reset()
+    _last_leaders.update(blob.get("last_leaders") or {})
+
+
 def congregation(agents: dict[str, Agent], faith_id: str) -> list[str]:
     return [
         a.agent_id for a in agents.values()
