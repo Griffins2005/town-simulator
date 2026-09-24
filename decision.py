@@ -133,6 +133,14 @@ class Perception:
     self_piety: float = 0.2
     nearby_faiths: dict[str, str] = field(default_factory=dict)
     proposer_faith: str | None = None
+    # Geography the agent can feel this tick: open streets from here,
+    # every place still reachable, and what standing here does to talk,
+    # trade, and politics. Decider names a destination; actions.py walks
+    # one hop. Flood / a closed bridge can empty these lists.
+    street_neighbors: list[str] = field(default_factory=list)
+    reachable: list[str] = field(default_factory=list)
+    space: dict = field(default_factory=dict)
+    blocked_streets: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -338,30 +346,26 @@ class RuleBasedDecider:
 
         WANDERLUST_CHANCE = 0.12
         if self.rng.random() < WANDERLUST_CHANCE:
-            dest = self._next_stop(p.self_location)
+            dest = self._next_stop(p)
             return take(Intent(action="move", args={"destination": dest}),
-                        "wander to keep circulating", 0.55)
+                        "wander the next street", 0.55)
 
-        # Priority 4: if other agents are present, maybe socialize
-        # (gossip or speak) based on sociability trait -- now read from
-        # real Perception data, not a hardcoded constant.
-        if p.location_agents and self.rng.random() < p.self_sociability:
+        # Priority 4: if other agents are present, maybe socialize.
+        # Public spaces raise or lower that chance — a tavern is louder
+        # than a clinic.
+        enc = float((p.space or {}).get("encounters", 1.0))
+        if p.location_agents and self.rng.random() < min(0.95, p.self_sociability * enc):
             return take(self._socialize(agent_id, p), "talk while others are here", 0.6)
 
-        # Priority 5: initiate a trade if standing at the market with a
-        # surplus to offer. "Surplus" is defined relative to a fixed
-        # comfort threshold rather than by inspecting anyone else's
-        # inventory -- an agent has no legitimate way to see another
-        # agent's private holdings (see module docstring on Perception),
-        # so it offers speculatively, the way a real market stall doesn't
-        # know who's buying before someone walks up. Gated by generosity:
-        # more generous agents trade more readily / ask for less in return.
+        # Priority 5: trade where trade is the point of the room (market,
+        # and a bank counter), not wherever two people happen to stand.
         FOOD_COMFORT_THRESHOLD = 2.0
         food_held = p.self_inventory.get("food", 0.0)
-        if (p.self_location == "market" and p.location_agents
-                and food_held > FOOD_COMFORT_THRESHOLD):
+        trade_weight = float((p.space or {}).get("trade", 1.0))
+        if (p.location_agents and food_held > FOOD_COMFORT_THRESHOLD
+                and (p.self_location == "market" or trade_weight >= 1.15)):
             return take(self._initiate_trade(agent_id, p, food_held),
-                        "offer surplus food at market", 0.58)
+                        "offer surplus food where trade happens", 0.58)
 
         # Priority 6: economic behavior -- work if resources are available
         # here and the agent leans industrious.
@@ -396,9 +400,9 @@ class RuleBasedDecider:
         # population spatially distributed, which both governance
         # (location-gated proposing) and economy (market needs people
         # WITHOUT surplus arriving too, to be worth trading with) depend on.
-        dest = self._next_stop(p.self_location)
+        dest = self._next_stop(p)
         return take(Intent(action="move", args={"destination": dest}),
-                    "nothing else applied — circulate", 0.2)
+                    "nothing else applied — walk the next street", 0.2)
 
     # -- helpers -----------------------------------------------------
     # These read trait-ish info off the perception object's relationships/
@@ -406,20 +410,17 @@ class RuleBasedDecider:
     # must only ever see what's in `Perception`, never the live Agent/World,
     # to keep the seam honest for Phase 2.
 
-    _CIRCUIT = ["farm", "workshop", "market", "tavern", "town_hall", "chapel"]
-
-    def _next_stop(self, current: str) -> str:
-        """Fixed circulation order. A real agent's reason to be somewhere
-        is a research question for Phase 2 (an LLM agent could reason
-        "I'm low on food, I should go to the farm" using self_inventory
-        from Perception); this just guarantees the town doesn't collapse
-        into a single room, which is a prerequisite for governance and
-        economy to have anyone to act on.
+    def _next_stop(self, p: Perception) -> str:
+        """Pick an open neighboring street. The town is a graph now —
+        wanderlust names a next hop the agent can actually walk.
         """
-        if current not in self._CIRCUIT:
-            return self._CIRCUIT[0]
-        idx = self._CIRCUIT.index(current)
-        return self._CIRCUIT[(idx + 1) % len(self._CIRCUIT)]
+        hops = list(p.street_neighbors or [])
+        if hops:
+            return self.rng.choice(hops)
+        elsewhere = [place for place in (p.reachable or []) if place != p.self_location]
+        if elsewhere:
+            return self.rng.choice(elsewhere)
+        return p.self_location
 
     def _survive_crisis(self, agent_id: str, p: Perception, take):
         """When the town is in a crisis, residents fight it — they do not idle.
@@ -457,10 +458,30 @@ class RuleBasedDecider:
                     "say": "the stores are failing — we have to work the farm",
                 }), "famine — warn a neighbor", 0.82)
 
+        if "flood" in p.active_crises:
+            wet = {"farm", "park"}
+            high = {"homes", "town_hall", "chapel", "bank"}
+            hops = list(p.street_neighbors or [])
+            if p.self_location in wet and hops:
+                dest = next((n for n in hops if n in high), hops[0])
+                return take(Intent(action="move", args={"destination": dest}),
+                            "flood — leave the water", 0.93)
+            if not hops and p.self_location in wet and p.location_agents:
+                other = self.rng.choice(p.location_agents)
+                return take(Intent(action="speak", args={"to": other},
+                                   say="the river took the road — we wait here"),
+                            "flood — stranded, talk it through", 0.82)
+            if p.location_agents and self.rng.random() < 0.45:
+                other = self.rng.choice(p.location_agents)
+                return take(Intent(action="gossip", args={"about": other, "tone": "chat"},
+                                   say="the bridge is closed — stay off the greenway"),
+                            "flood — warn a neighbor", 0.78)
+
         if "unrest" in p.active_crises:
-            if p.self_location != "town_hall" and self.rng.random() < 0.7:
-                return take(Intent(action="move", args={"destination": "town_hall"}),
-                            "unrest — go demand a vote", 0.9)
+            if p.self_location not in ("town_hall", "park") and self.rng.random() < 0.7:
+                dest = "park" if self.rng.random() < 0.35 else "town_hall"
+                return take(Intent(action="move", args={"destination": dest}),
+                            "unrest — gather where people can hear", 0.9)
             if p.self_location == "town_hall" and not p.open_proposals:
                 return take(Intent(action="propose_rule", args={
                     "rule_type": "wealth_tax",
@@ -742,7 +763,8 @@ class RuleBasedDecider:
                 args={"about": mark["id"], "tone": "scandal"},
                 say=f"did you hear the scandal around {mark_name}? I would not trust their ballot",
             )
-        if p.self_location == "chapel" and p.self_piety > 0.4 and self.rng.random() < 0.5:
+        faith_tie = float((p.space or {}).get("faith_tie", 1.0))
+        if p.self_location == "chapel" and p.self_piety > 0.4 and self.rng.random() < 0.32 * faith_tie:
             return Intent(
                 action="speak",
                 args={"to": other},

@@ -33,6 +33,7 @@ import json
 
 import analytics
 import faith
+import geography
 import governance
 from agent import Agent
 from engine import Engine
@@ -52,6 +53,10 @@ DEFAULT_LOCATION_LAYOUT = {
     "town_hall": {"x": 720, "y": 280},
     "tavern": {"x": 820, "y": 480},
     "chapel": {"x": 560, "y": 220},
+    "park": {"x": 980, "y": 200},
+    "clinic": {"x": 900, "y": 380},
+    "bank": {"x": 700, "y": 430},
+    "homes": {"x": 300, "y": 380},
 }
 
 
@@ -123,6 +128,29 @@ class Recorder:
         frame = self._snapshot(new_events, tick_of_this_frame)
         self.frames.append(frame)
         return frame
+
+    def peek(self) -> dict:
+        """Paint the current world without advancing a tick.
+
+        Used after an observer inject so flood / famine / unrest show
+        on the map immediately, including while the sim is paused.
+        """
+        tick = self.engine.world.tick
+        last = self.frames[-1] if self.frames else None
+        seen = {
+            (e.get("kind"), e.get("tick"), e.get("crisis"), e.get("agent"))
+            for e in ((last or {}).get("events") or [])
+        }
+        fresh = []
+        for event in self.engine.world.event_log:
+            if event.get("tick") != tick:
+                continue
+            key = (event.get("kind"), event.get("tick"), event.get("crisis"), event.get("agent"))
+            if key in seen:
+                continue
+            fresh.append(self._normalize_event(event))
+            seen.add(key)
+        return self._snapshot(fresh, tick)
 
     @staticmethod
     def _normalize_event(event: dict) -> dict:
@@ -201,6 +229,12 @@ class Recorder:
             "active_rules": dict(world.active_rules),
             "active_crises": sorted(world.active_crises),
             "crisis_intensity": dict(world.crisis_intensity),
+            "crisis_hold": dict(world.crisis_hold),
+            "location_resources": {
+                name: {k: round(v, 3) for k, v in loc.resources.items()}
+                for name, loc in world.locations.items()
+            },
+            "enacted_proposals": governance.enacted_proposals_snapshot(),
             "treasury": round(world.treasury, 2),
             "events": new_events,
             "factions": dict(world.factions),
@@ -213,6 +247,7 @@ class Recorder:
             "decision_records": list(self.engine.last_decision_records),
             "metrics": metrics,
             "relationship_edges": analytics.relationship_edges(self.engine.agents),
+            "geography": geography.snapshot(world),
         }
 
     def agents_static_snapshot(self) -> dict:

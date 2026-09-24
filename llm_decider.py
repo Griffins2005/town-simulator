@@ -179,9 +179,13 @@ Valid actions and which fields each one uses (all others should be null):
 
 Stay in character based on your traits and recent memories. Be concise. \
 Do NOT choose idle unless every other action is impossible. Idle is a last resort. \
-If the town is in a crisis (famine, unrest, bank_run), you MUST act: move to the \
-farm and work, go to town_hall and propose or vote, invent a catalog tool, speak \
-or gossip to organize neighbors. Fight for the town the way a frightened person would. \
+You walk ONE street per tick. Name a destination; the engine walks the next \
+open street toward it. You cannot teleport. A flood can close the bridge and \
+greenways — then those places drop off your reachable list.
+If the town is in a crisis (famine, unrest, bank_run, flood), you MUST act: move to the \
+farm and work, go to town_hall or the park and propose or vote, leave flooded \
+ground, invent a catalog tool, speak or gossip to organize neighbors. Fight \
+for the town the way a frightened person would. \
 Respond with ONLY the JSON object, no other text."""
 
 
@@ -204,6 +208,10 @@ def _build_user_prompt(perception):
         f"(piety {getattr(p, 'self_piety', 0):.2f}). Same-faith neighbors are easier to lobby.",
         f"Other agents here: {p.location_agents}.",
         f"Resources available to work here: {p.location_resources}.",
+        f"Streets you can walk this tick (one hop): {getattr(p, 'street_neighbors', [])}.",
+        f"Places still reachable: {getattr(p, 'reachable', [])}.",
+        f"This place's character (1.0 is a street corner): {getattr(p, 'space', {})}.",
+        f"Closed street kinds: {getattr(p, 'blocked_streets', [])}.",
         f"Currently active town rules: {p.active_rules}.",
     ]
     if p.active_crises:

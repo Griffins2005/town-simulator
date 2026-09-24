@@ -31,6 +31,8 @@ from memory import MemoryEntry
 from world import World
 
 import economy
+import faith
+import geography
 import governance
 import inventions
 
@@ -60,27 +62,20 @@ def execute(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]
 
 
 def _move(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
-    """Handler for the "move" action. Relocates `actor` to
-    `intent.args["destination"]` if that location exists and no active
-    rule (e.g. a curfew) currently blocks movement for this agent.
+    """Walk one open street toward `intent.args["destination"]`.
+
+    The Decider names a place; this handler walks the next hop on the
+    street graph. A flood, a closed bridge, or a missing road can make
+    the destination unreachable — the agent fails that tick instead of
+    teleporting.
     """
     destination = intent.args.get("destination")
     if destination not in world.locations:
         return ActionResult(False, f"no such location '{destination}'")
 
-    # Governance check: a passed rule can block movement (e.g. curfew).
-    # This is the concrete mechanism that makes "governance" more than
-    # theater -- active_rules is read here, not just logged elsewhere.
     if governance.is_movement_blocked(world, actor):
         actor.memory.add(MemoryEntry(world.tick, "move_blocked_by_rule", None,
                                       {"attempted": destination}))
-        # A blocked attempt is itself a (mild) norm violation worth a
-        # small reputation hit -- this is the actual enforcement
-        # mechanism for "norms have consequences," distinct from
-        # economy.py's reward-for-compliance side. Deliberately small:
-        # a single curfew bump shouldn't tank reputation the way
-        # repeated violations should -- and repeated violations DO
-        # compound here since each one calls this same line.
         RULE_VIOLATION_REPUTATION_DELTA = 0.02
         actor.reputation = max(0.0, actor.reputation - RULE_VIOLATION_REPUTATION_DELTA)
         return ActionResult(
@@ -90,12 +85,30 @@ def _move(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) 
         )
 
     previous = actor.location
-    actor.location = destination
-    world.log_event("move", agent=actor.agent_id, to=destination)
+    if previous == destination:
+        return ActionResult(True, "already there")
+
+    hop = geography.next_hop(previous, destination, world)
+    if hop is None:
+        actor.memory.add(MemoryEntry(world.tick, "road_closed", None,
+                                      {"attempted": destination}))
+        world.log_event("road_closed", agent=actor.agent_id, from_=previous,
+                        attempted=destination)
+        return ActionResult(
+            False, f"no open street from {previous} toward {destination}",
+            legal=True,
+            consequences=["flood or a closed road blocked the way"],
+        )
+
+    actor.location = hop
+    heading = destination if hop != destination else None
+    world.log_event("move", agent=actor.agent_id, to=hop,
+                    heading=heading, from_=previous)
+    note = f"now at {hop}" if not heading else f"now at {hop}, still heading for {destination}"
     return ActionResult(
-        True, "moved",
-        state_changes=[{"field": "location", "from": previous, "to": destination}],
-        consequences=[f"now at {destination}"],
+        True, "walked" if heading else "moved",
+        state_changes=[{"field": "location", "from": previous, "to": hop}],
+        consequences=[note],
     )
 
 
@@ -155,8 +168,13 @@ def _speak(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent])
     # number buried inline, so the "social activities" tuning knob is
     # easy to find later.
     SPEAK_RELATIONSHIP_DELTA = 0.02
-    actor.adjust_relationship(target.agent_id, SPEAK_RELATIONSHIP_DELTA)
-    target.adjust_relationship(actor.agent_id, SPEAK_RELATIONSHIP_DELTA)
+    weights = geography.space(actor.location)
+    delta = SPEAK_RELATIONSHIP_DELTA * weights.get("encounters", 1.0)
+    if faith.same_faith(getattr(actor.persona, "faith", None),
+                        getattr(target.persona, "faith", None)):
+        delta *= weights.get("faith_tie", 1.0)
+    actor.adjust_relationship(target.agent_id, delta)
+    target.adjust_relationship(actor.agent_id, delta)
     # `said` is included in the world-level event (not just the per-agent
     # memory entries above) so recorder.py's frame pass-through -- and by
     # extension live_server.py's SSE feed -- can render the actual
@@ -166,8 +184,8 @@ def _speak(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent])
     world.log_event("speak", agent=actor.agent_id, to=target.agent_id, said=intent.say or "")
     return ActionResult(
         True, "spoke",
-        state_changes=[{"field": "relationship", "with": target.agent_id, "delta": SPEAK_RELATIONSHIP_DELTA}],
-        consequences=["relationship +0.02 both ways"],
+        state_changes=[{"field": "relationship", "with": target.agent_id, "delta": round(delta, 4)}],
+        consequences=[f"relationship {delta:+.3f} both ways"],
     )
 
 
@@ -212,6 +230,7 @@ def _gossip(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]
             tone = "chat"
 
     hit = {"expel": -0.05, "scandal": -0.035, "accuse": -0.025, "praise": 0.02, "welcome": 0.015}.get(tone, 0.0)
+    hit *= geography.space(actor.location).get("gossip", 1.0)
     before = about.reputation
     if hit:
         about.reputation = max(0.0, min(1.0, about.reputation + hit))

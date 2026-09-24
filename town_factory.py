@@ -16,7 +16,10 @@ from decision import RuleBasedDecider
 from faith import assign_faith
 from world import Location, World
 
-LOCATIONS = ["farm", "workshop", "market", "town_hall", "tavern", "chapel"]
+LOCATIONS = [
+    "farm", "workshop", "market", "town_hall", "tavern",
+    "chapel", "park", "clinic", "bank", "homes",
+]
 
 FIRST_NAMES = [
     "Marcus Hale", "Lena Voss", "Tomas Reed", "Aria Cho", "Boris Klein",
@@ -49,6 +52,10 @@ def build_world() -> World:
         Location("town_hall", resources={}),
         Location("tavern", resources={}),
         Location("chapel", resources={}),
+        Location("park", resources={}),
+        Location("clinic", resources={}),
+        Location("bank", resources={}),
+        Location("homes", resources={}),
     ])
 
 
@@ -119,7 +126,7 @@ def spawn_newcomer(rng: random.Random, agents: dict, world, replacing: str | Non
     agent = Agent(
         agent_id=agent_id,
         persona=persona,
-        location=rng.choice(["market", "tavern", "town_hall"]),
+        location=rng.choice(["market", "tavern", "town_hall", "homes", "park"]),
         money=round(rng.uniform(4, 12), 2),
         inventory={"food": round(rng.uniform(0.5, 2.0), 1)},
         decider=RuleBasedDecider(rng=rng),

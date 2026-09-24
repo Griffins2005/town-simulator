@@ -112,6 +112,7 @@ UNREST_CHANCE_PER_TICK_ABOVE_TRIGGER = 0.02
 UNREST_TAG = "unrest"
 UNREST_REPUTATION_DAMPING = 0.02
 FAMINE_TAG = "famine"
+FLOOD_TAG = "flood"
 
 # Observer-injected crises: label -> magnitude and how many ticks the
 # town must live with it before housekeeping may clear the flag.
@@ -309,12 +310,12 @@ def inject_crisis(
 ) -> dict:
     """Stamp a crisis the town can feel: resources, memories, hold time.
 
-    `kind`: famine | unrest | bank_run (market_shock maps to famine).
+    `kind`: famine | unrest | bank_run | flood (market_shock maps to famine).
     Housekeeping will not clear the tag while crisis_hold remains.
     """
     alias = {"market_shock": FAMINE_TAG, "shock": FAMINE_TAG, "scarcity": FAMINE_TAG}
     tag = alias.get(kind, kind)
-    if tag not in (FAMINE_TAG, UNREST_TAG, BANK_RUN_TAG):
+    if tag not in (FAMINE_TAG, UNREST_TAG, BANK_RUN_TAG, FLOOD_TAG):
         tag = UNREST_TAG
     label, mag, hold = resolve_intensity(intensity)
 
@@ -338,6 +339,14 @@ def inject_crisis(
             agent.reputation = max(0.0, agent.reputation - 0.08 * mag)
         world.treasury = max(0.0, round(world.treasury * (1.0 - 0.2 * mag), 2))
         text = f"{label} unrest — streets tense, people demand a political answer"
+    elif tag == FLOOD_TAG:
+        farm = world.locations.get("farm")
+        if farm and farm.resources and mag >= 0.5:
+            for resource_kind in list(farm.resources.keys()):
+                farm.resources[resource_kind] = round(
+                    farm.resources[resource_kind] * (1.0 - 0.18 * mag), 3
+                )
+        text = f"{label} flood — the river is up, the bridge and greenways close"
     else:
         for agent in agents.values():
             agent.reputation = max(0.05, agent.reputation - 0.06 * mag)
@@ -382,6 +391,12 @@ def tick_crises(world: World, agents: dict[str, Agent], rng: random.Random) -> N
                 for agent in agents.values():
                     if agent.money > 1:
                         agent.money = round(agent.money * (1.0 - 0.02 * mag), 2)
+        elif tag == FLOOD_TAG:
+            # The streets stay closed via geography.blocked_kinds; here
+            # only the people still standing in the water feel it.
+            for agent in agents.values():
+                if agent.location in ("farm", "park"):
+                    agent.reputation = max(0.0, agent.reputation - 0.004 * mag)
 
         world.crisis_hold[tag] = world.crisis_hold.get(tag, 0) - 1
         if world.crisis_hold[tag] <= 0:

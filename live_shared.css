@@ -295,10 +295,43 @@ body.observe .float {
   position: absolute; left: 14px; top: 14px; z-index: 5;
   display: flex; gap: 8px;
 }
-#townWrap.view-topography #townBg { opacity: 0.35; filter: grayscale(0.4) contrast(1.1); }
+#townWrap.view-topography #townBg { opacity: 0.28; filter: grayscale(0.45) contrast(1.15); }
 #townWrap.view-landuse #townBg { opacity: 0.45; }
 #townWrap.view-mobility #townBg { opacity: 0.4; }
 #townWrap.view-social #townBg { opacity: 0.3; filter: grayscale(0.5); }
+
+#crisisBanner {
+  display: none; position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+  z-index: 6; padding: 8px 14px; max-width: min(520px, 46vw); text-align: center;
+}
+#crisisBanner.on { display: block; }
+#crisisBanner b { display: block; letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; }
+#crisisBanner.flood { border-color: #4da3ff; color: #9fd0ff; }
+#crisisBanner.famine { border-color: #c4a35a; color: #e8d5a0; }
+#crisisBanner.unrest { border-color: #ef5b5b; color: #ffc4c4; }
+#crisisBanner.bank_run { border-color: #e8c36a; color: #f0e0a8; }
+
+.lab-panel {
+  display: none; position: absolute; z-index: 5; padding: 12px 14px; overflow: auto;
+}
+.lab-panel.open { display: block; }
+#labPeople, #labRelationships, #labPolitics, #labExperiments {
+  left: 14px; top: 58px; bottom: 14px; width: min(360px, 32vw);
+}
+#labForensics {
+  right: 14px; top: 14px; bottom: 14px; width: min(380px, 34vw);
+}
+body[data-lab="people"] #peopleDrawer { display: none; }
+body[data-lab="forensics"] #hudRight { display: none; }
+body[data-lab="politics"] #proposalCard { display: none; }
+body[data-lab="experiments"] #hudLeft { opacity: 0.35; pointer-events: none; }
+.lab-row { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.lab-row b { display: block; }
+.lab-search {
+  width: 100%; margin: 0 0 8px; padding: 6px 8px;
+  background: #0e1522; border: 1px solid #2a3348; border-radius: 4px;
+  color: var(--ink); font: inherit; font-size: 12px;
+}
 
 .mem-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .mem-filter label {

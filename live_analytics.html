@@ -22,13 +22,13 @@
 <div id="app">
   <nav id="rail">
     <a class="logo" href="/" title="Eidolon Society Lab"><img src="/static/eidolon-appicon.png" alt="Eidolon Society Lab"></a>
-    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="tip">Observe</span></a>
-    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3 2.5-5 6-5s6 2 6 5"/></svg><span class="tip">People</span></a>
-    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><circle cx="6" cy="8" r="2.2"/><circle cx="18" cy="7" r="2.2"/><circle cx="12" cy="17" r="2.2"/></svg><span class="tip">Relationships</span></a>
+    <a class="navbtn" href="/#observe"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="tip">Observe</span></a>
+    <a class="navbtn" href="/#people"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3 2.5-5 6-5s6 2 6 5"/></svg><span class="tip">People</span></a>
+    <a class="navbtn" href="/#relationships"><svg viewBox="0 0 24 24"><circle cx="6" cy="8" r="2.2"/><circle cx="18" cy="7" r="2.2"/><circle cx="12" cy="17" r="2.2"/></svg><span class="tip">Relationships</span></a>
     <a class="navbtn active" href="/analytics"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15v-4M12 15V8M16 15v-6"/></svg><span class="tip">Economy</span></a>
-    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><path d="M4 10h16M6 10v8M18 10v8M4 18h16M12 4l8 6H4z"/></svg><span class="tip">Politics</span></a>
-    <a class="navbtn active" href="/analytics"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/></svg><span class="tip">Forensics</span></a>
-    <a class="navbtn" href="/"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v5l-5 9a3 3 0 0 0 2.6 4.4h8.8A3 3 0 0 0 19 17l-5-9V3"/></svg><span class="tip">Experiments</span></a>
+    <a class="navbtn" href="/#politics"><svg viewBox="0 0 24 24"><path d="M4 10h16M6 10v8M18 10v8M4 18h16M12 4l8 6H4z"/></svg><span class="tip">Politics</span></a>
+    <a class="navbtn" href="/#forensics"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/></svg><span class="tip">Forensics</span></a>
+    <a class="navbtn" href="/#experiments"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v5l-5 9a3 3 0 0 0 2.6 4.4h8.8A3 3 0 0 0 19 17l-5-9V3"/></svg><span class="tip">Experiments</span></a>
   </nav>
   <div id="shell">
     <header id="topbar">
@@ -54,7 +54,7 @@
         <div class="panel"><h2>Event mix (this tick)</h2><canvas id="mixChart"></canvas></div>
         <div class="panel"><h2>Gini / entropy / anomaly</h2><canvas id="tsChart"></canvas></div>
         <div class="panel"><h2>Social graph</h2><svg id="netSvg" viewBox="0 0 300 230" style="width:100%;height:190px"></svg></div>
-        <div class="panel"><h2>Location occupancy heatmap</h2><svg id="heatSvg" viewBox="0 0 320 150" style="width:100%;height:170px"></svg></div>
+        <div class="panel"><h2>Location occupancy heatmap</h2><svg id="heatSvg" viewBox="0 0 320 280" style="width:100%;height:260px"></svg></div>
         <div class="panel"><h2>Domain crossings</h2><svg id="domainSvg" viewBox="0 0 320 150" style="width:100%;height:160px"></svg></div>
         <div class="panel"><h2>Money by agent</h2><canvas id="moneyChart"></canvas></div>
         <div class="panel"><h2>Faction membership</h2><div id="factionBars" style="font-size:12px;line-height:1.7;color:#c5cde0"></div></div>

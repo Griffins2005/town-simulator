@@ -21,19 +21,23 @@
   .tabs { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
   .tab { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 4px 8px; border-radius: 4px; cursor: pointer; }
   .tab.on { background: #1d6b66; color: #fff; }
+  .field { margin: 0 0 6px; }
+  .field .k { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .field .v { font-size: 12px; color: var(--ink); line-height: 1.4; }
+  .legend { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2a3348; font-size: 11px; color: var(--muted); line-height: 1.45; }
 </style>
 </head>
 <body class="observe">
 <div id="app">
   <nav id="rail">
     <a class="logo" href="/" title="Eidolon Society Lab"><img src="/static/eidolon-appicon.png" alt="Eidolon Society Lab"></a>
-    <a class="navbtn active" href="/" title="Observe"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="tip">Observe</span></a>
-    <a class="navbtn" href="#" id="navPeople"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3 2.5-5 6-5s6 2 6 5"/><circle cx="17" cy="8" r="2.4"/><path d="M16 19c.3-2.2 1.8-3.8 4-4.4"/></svg><span class="tip">People</span></a>
-    <a class="navbtn" href="#" id="navRel"><svg viewBox="0 0 24 24"><circle cx="6" cy="8" r="2.2"/><circle cx="18" cy="7" r="2.2"/><circle cx="12" cy="17" r="2.2"/><path d="M8 9l3 6M16 9l-3 6M8.2 8h7"/></svg><span class="tip">Relationships</span></a>
-    <a class="navbtn" href="/analytics"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15v-4M12 15V8M16 15v-6"/></svg><span class="tip">Economy</span></a>
-    <a class="navbtn" href="#" id="navPol"><svg viewBox="0 0 24 24"><path d="M4 10h16M6 10v8M18 10v8M4 18h16M12 4l8 6H4z"/></svg><span class="tip">Politics</span></a>
-    <a class="navbtn" href="#" id="navFor"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/></svg><span class="tip">Forensics</span></a>
-    <a class="navbtn" href="#" id="navExp"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v5l-5 9a3 3 0 0 0 2.6 4.4h8.8A3 3 0 0 0 19 17l-5-9V3"/></svg><span class="tip">Experiments</span></a>
+    <a class="navbtn active" href="#observe" data-lab="observe" title="Observe"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="tip">Observe</span></a>
+    <a class="navbtn" href="#people" data-lab="people" title="People"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3 2.5-5 6-5s6 2 6 5"/><circle cx="17" cy="8" r="2.4"/><path d="M16 19c.3-2.2 1.8-3.8 4-4.4"/></svg><span class="tip">People</span></a>
+    <a class="navbtn" href="#relationships" data-lab="relationships" title="Relationships"><svg viewBox="0 0 24 24"><circle cx="6" cy="8" r="2.2"/><circle cx="18" cy="7" r="2.2"/><circle cx="12" cy="17" r="2.2"/><path d="M8 9l3 6M16 9l-3 6M8.2 8h7"/></svg><span class="tip">Relationships</span></a>
+    <a class="navbtn" href="/analytics" data-lab="economy" title="Economy"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15v-4M12 15V8M16 15v-6"/></svg><span class="tip">Economy</span></a>
+    <a class="navbtn" href="#politics" data-lab="politics" title="Politics"><svg viewBox="0 0 24 24"><path d="M4 10h16M6 10v8M18 10v8M4 18h16M12 4l8 6H4z"/></svg><span class="tip">Politics</span></a>
+    <a class="navbtn" href="#forensics" data-lab="forensics" title="Forensics"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/></svg><span class="tip">Forensics</span></a>
+    <a class="navbtn" href="#experiments" data-lab="experiments" title="Experiments"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v5l-5 9a3 3 0 0 0 2.6 4.4h8.8A3 3 0 0 0 19 17l-5-9V3"/></svg><span class="tip">Experiments</span></a>
   </nav>
 
   <div id="shell">
@@ -126,11 +130,33 @@
         </section>
       </div>
 
-      <div id="peopleDrawer" class="glass">
+      <div id="crisisBanner" class="glass"></div>
+      <div id="labPeople" class="glass lab-panel" data-lab="people">
         <h2 class="panel-title">People</h2>
+        <input class="lab-search" id="peopleSearch" type="search" placeholder="Search residents">
         <div id="peopleList"></div>
       </div>
-      <div id="compareBox" class="glass compare"></div>
+      <div id="labRelationships" class="glass lab-panel" data-lab="relationships">
+        <h2 class="panel-title">Relationships</h2>
+        <div id="relBody" class="tiny">waiting for the first tick…</div>
+      </div>
+      <div id="labPolitics" class="glass lab-panel" data-lab="politics">
+        <h2 class="panel-title">Politics</h2>
+        <div id="polBody" class="tiny">waiting for the first tick…</div>
+      </div>
+      <div id="labForensics" class="glass lab-panel" data-lab="forensics">
+        <h2 class="panel-title">Forensics</h2>
+        <input class="lab-search" id="forensicSearch" type="search" placeholder="Search memories and events">
+        <div id="forensicBody" class="tiny">click a resident on the map</div>
+      </div>
+      <div id="labExperiments" class="glass lab-panel" data-lab="experiments">
+        <h2 class="panel-title">Experiments</h2>
+        <div class="tiny" style="margin-bottom:8px">Save a live tick, then compare two recorded frames from this session.</div>
+        <button type="button" id="saveCheckpointBtn">Save checkpoint</button>
+        <button type="button" id="returnLiveBtn">Return to live</button>
+        <div id="checkpointList" class="tiny" style="margin-top:10px">no checkpoints yet</div>
+        <div id="compareBox" class="tiny" style="margin-top:10px"></div>
+      </div>
     </main>
 
     <footer id="dock">
@@ -161,14 +187,17 @@
             <button type="button" data-crisis="bank_run" data-intensity="mild">mild</button>
             <button type="button" data-crisis="bank_run" data-intensity="serious">serious</button>
             <button type="button" data-crisis="bank_run" data-intensity="severe">severe</button>
+            <div class="tiny" style="margin:6px 2px 4px">Flood</div>
+            <button type="button" data-crisis="flood" data-intensity="mild">mild</button>
+            <button type="button" data-crisis="flood" data-intensity="serious">serious</button>
+            <button type="button" data-crisis="flood" data-intensity="severe">severe</button>
           </div>
         </div>
         <div class="menu up" id="moreMenu" data-up="1">
           <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">More actions</button>
           <div class="menu-pop" role="menu">
             <div class="menu-row" id="markFork" tabindex="0">Save checkpoint</div>
-            <div class="menu-row" id="forkSim" tabindex="0">Fork simulation</div>
-            <div class="menu-row" id="compareFork" tabindex="0">Compare branches</div>
+            <div class="menu-row" id="compareFork" tabindex="0">Compare last two</div>
             <div class="menu-row" id="exportTrace" tabindex="0">Export trace</div>
           </div>
         </div>
@@ -197,19 +226,79 @@ const VISUAL = {
   town_hall: { x: 720, y: 280, label: 'Town Hall' },
   market: { x: 480, y: 420, label: 'Market' },
   workshop: { x: 1180, y: 420, label: 'Workshop' },
-  tavern: { x: 820, y: 480, label: 'Tavern' }
+  tavern: { x: 820, y: 480, label: 'Tavern' },
+  park: { x: 980, y: 200, label: 'Park' },
+  clinic: { x: 900, y: 380, label: 'Clinic' },
+  bank: { x: 700, y: 430, label: 'Bank' },
+  homes: { x: 300, y: 380, label: 'Homes' }
 };
-const LANDMARKS = [
-  { x: 980, y: 200, label: 'Park' },
-  { x: 900, y: 380, label: 'Clinic' },
-  { x: 700, y: 430, label: 'Bank' },
-  { x: 300, y: 380, label: 'Homes' }
+const STREETS = [
+  ['farm', 'market'], ['farm', 'homes'], ['homes', 'market'],
+  ['market', 'tavern'], ['market', 'bank'], ['bank', 'town_hall'],
+  ['tavern', 'town_hall'], ['town_hall', 'chapel'], ['chapel', 'park'],
+  ['park', 'clinic'], ['park', 'tavern'], ['clinic', 'bank'],
+  ['clinic', 'workshop'], ['workshop', 'tavern']
 ];
+const LANDUSE = {
+  farm: { cx: 220, cy: 640, rx: 160, ry: 90, fill: '#8a7a4b' },
+  homes: { cx: 300, cy: 380, rx: 90, ry: 60, fill: '#e8ddd0' },
+  market: { cx: 500, cy: 430, rx: 110, ry: 70, fill: '#9a5a48' },
+  town_hall: { cx: 720, cy: 280, rx: 90, ry: 60, fill: '#d7c7a8' },
+  tavern: { cx: 820, cy: 480, rx: 70, ry: 50, fill: '#b07a48' },
+  chapel: { cx: 560, cy: 220, rx: 70, ry: 46, fill: '#c4b59a' },
+  park: { cx: 980, cy: 220, rx: 120, ry: 70, fill: '#8fa57a' },
+  clinic: { cx: 900, cy: 380, rx: 70, ry: 46, fill: '#7a8a9a' },
+  bank: { cx: 700, cy: 430, rx: 56, ry: 40, fill: '#c4b8a8' },
+  workshop: { cx: 1180, cy: 420, rx: 80, ry: 50, fill: '#8a7a6a' }
+};
+const DOMAIN_PLACE = { social: 'tavern', political: 'town_hall', economic: 'market' };
+const ROLE_MEANING = {
+  Maker: 'works and invents more readily — strongest trait is industriousness',
+  Organizer: 'talks and gathers people — strongest trait is sociability',
+  Mediator: 'trades generously and keeps peace — strongest trait is generosity',
+  Clerk: 'respects laws and votes for rules — strongest trait is rule respect',
+  Speculator: 'takes economic risks — strongest trait is risk tolerance',
+  Resident: 'no single trait stands out yet'
+};
+const TRAIT_MEANING = {
+  industriousness: 'how readily they work and invent',
+  generosity: 'how cheap they sell and how readily they accept a deal',
+  sociability: 'how often they speak and gossip',
+  rule_respect: 'how often they propose laws and vote yes',
+  risk_tolerance: 'how they act in a bank run or shock',
+  piety: 'how much their faith pulls them to chapel, hall, or farm'
+};
+function field(label, value, hint) {
+  return '<div class="field" title="' + escapeHtml(hint || label) + '"><div class="k">' +
+    escapeHtml(label) + '</div><div class="v">' + value + '</div></div>';
+}
 const timelineEvents = [];
 let extraTab = 'profile';
+let labMode = 'observe';
+const checkpoints = [];
+let viewingCheckpoint = null;
 
 function locOf(name) {
   return VISUAL[name] || LOCS[name] || { x: 800, y: 450 };
+}
+
+function drawStreets(frame) {
+  const roads = document.getElementById('mobilityLayer');
+  if (!roads) return;
+  roads.innerHTML = '';
+  const edges = (frame && frame.geography && frame.geography.edges) || STREETS.map(([a, b]) => ({ a, b, open: true }));
+  edges.forEach(e => {
+    const a = locOf(e.a);
+    const b = locOf(e.b);
+    const open = e.open !== false;
+    roads.appendChild(svgEl('line', {
+      x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+      stroke: open ? '#c4b8a8' : '#c45a4a',
+      'stroke-width': open ? 5 : 3,
+      'stroke-dasharray': open ? 'none' : '8 6',
+      opacity: open ? 0.85 : 0.75
+    }));
+  });
 }
 
 function drawBaseLayers(svg) {
@@ -241,20 +330,9 @@ function drawBaseLayers(svg) {
   land.appendChild(svgEl('ellipse', { cx: 900, cy: 380, rx: 70, ry: 46, fill: '#7a8a9a', opacity: 0.22 }));
   svg.appendChild(land);
 
-  const roads = svgEl('g', { id: 'mobilityLayer' });
-  roads.appendChild(svgEl('path', {
-    d: 'M180 640 C 360 520, 420 460, 500 430 S 680 360, 720 300 S 900 260, 1100 400',
-    fill: 'none', stroke: '#c4b8a8', 'stroke-width': 7, opacity: 0.85
-  }));
-  roads.appendChild(svgEl('path', {
-    d: 'M300 380 C 400 400, 460 410, 500 430 S 700 460, 820 480 S 1000 450, 1180 420',
-    fill: 'none', stroke: '#b7b0a4', 'stroke-width': 4, opacity: 0.7
-  }));
-  roads.appendChild(svgEl('path', {
-    d: 'M560 220 C 620 240, 680 260, 720 280',
-    fill: 'none', stroke: '#d7c7a8', 'stroke-width': 3, opacity: 0.75
-  }));
-  svg.appendChild(roads);
+  svg.appendChild(svgEl('g', { id: 'mobilityLayer' }));
+  svg.appendChild(svgEl('g', { id: 'crisisLayer' }));
+  drawStreets(null);
 }
 
 function drawStaticTown() {
@@ -270,19 +348,106 @@ function drawStaticTown() {
     t.textContent = loc.label;
     labels.appendChild(t);
   });
-  LANDMARKS.forEach(loc => {
-    const t = svgEl('text', {
-      x: loc.x, y: loc.y - 22, 'text-anchor': 'middle', fill: '#3a4338',
-      'font-size': 12, 'font-weight': 600
-    });
-    t.textContent = loc.label;
-    labels.appendChild(t);
-  });
   svg.appendChild(labels);
   svg.appendChild(svgEl('g', { id: 'crossLayer' }));
   svg.appendChild(svgEl('g', { id: 'graphLayer' }));
   svg.appendChild(svgEl('g', { id: 'agentLayer' }));
   applyMapChrome();
+}
+
+function crisisLevel(tag, frame) {
+  const mag = ((frame && frame.crisis_intensity) || {})[tag];
+  if (mag >= 0.8) return 'severe';
+  if (mag >= 0.5) return 'serious';
+  if (mag != null) return 'mild';
+  return '';
+}
+
+function drawLandUse(frame) {
+  const land = document.getElementById('landuseLayer');
+  if (!land) return;
+  land.innerHTML = '';
+  const counts = ((frame && frame.metrics) || {}).location_counts || {};
+  const food = (((frame && frame.location_resources) || {}).farm || {}).food;
+  const max = Math.max(1, ...Object.values(counts), 1);
+  const famine = frame && (frame.active_crises || []).includes('famine');
+  Object.entries(LANDUSE).forEach(([key, spec]) => {
+    const n = counts[key] || 0;
+    let fill = spec.fill;
+    if (key === 'farm' && famine) fill = '#6a5430';
+    land.appendChild(svgEl('ellipse', {
+      cx: spec.cx, cy: spec.cy, rx: spec.rx, ry: spec.ry,
+      fill, opacity: 0.16 + 0.45 * (n / max)
+    }));
+    const t = svgEl('text', {
+      x: spec.cx, y: spec.cy + spec.ry + 12, 'text-anchor': 'middle',
+      fill: '#2a3128', 'font-size': 11, 'font-weight': 600
+    });
+    t.textContent = (VISUAL[key] ? VISUAL[key].label : key) + (n ? ' · ' + n : '') +
+      (key === 'farm' && food != null ? ' · ' + Number(food).toFixed(1) + ' food' : '');
+    land.appendChild(t);
+  });
+}
+
+function drawCrisis(frame) {
+  const g = document.getElementById('crisisLayer');
+  if (!g) return;
+  g.innerHTML = '';
+  const crises = (frame && frame.active_crises) || [];
+  const magOf = (tag) => Number(((frame && frame.crisis_intensity) || {})[tag] || 0.5);
+  crises.forEach(tag => {
+    const m = magOf(tag);
+    if (tag === 'flood') {
+      g.appendChild(svgEl('path', {
+        d: 'M20 500 C 260 470, 400 560, 640 530 S 980 480, 1280 560 S 1500 640, 1620 610',
+        fill: 'none', stroke: '#3d7ea8', 'stroke-width': 18 + m * 28, opacity: 0.45 + m * 0.25
+      }));
+      g.appendChild(svgEl('ellipse', { cx: 220, cy: 640, rx: 170 + m * 40, ry: 100 + m * 30, fill: '#3d7ea8', opacity: 0.22 + m * 0.2 }));
+      g.appendChild(svgEl('ellipse', { cx: 980, cy: 220, rx: 130 + m * 30, ry: 80 + m * 20, fill: '#3d7ea8', opacity: 0.18 + m * 0.18 }));
+      const t = svgEl('text', { x: 640, y: 560, fill: '#134056', 'font-size': 16, 'font-weight': 800, 'text-anchor': 'middle' });
+      t.textContent = crisisLevel('flood', frame).toUpperCase() + ' FLOOD';
+      g.appendChild(t);
+    }
+    if (tag === 'famine') {
+      const farm = locOf('farm');
+      g.appendChild(svgEl('ellipse', { cx: farm.x, cy: farm.y + 20, rx: 170, ry: 100, fill: '#6a5430', opacity: 0.35 + m * 0.3 }));
+      const food = (((frame.location_resources || {}).farm || {}).food);
+      const t = svgEl('text', { x: farm.x, y: farm.y - 40, fill: '#3a2e12', 'font-size': 15, 'font-weight': 800, 'text-anchor': 'middle' });
+      t.textContent = crisisLevel('famine', frame).toUpperCase() + ' FAMINE' + (food != null ? ' · ' + Number(food).toFixed(1) + ' left' : '');
+      g.appendChild(t);
+    }
+    if (tag === 'unrest') {
+      ['town_hall', 'park'].forEach((place, i) => {
+        const loc = locOf(place);
+        g.appendChild(svgEl('circle', { cx: loc.x, cy: loc.y, r: 36 + m * 28, fill: 'none', stroke: '#ef5b5b', 'stroke-width': 3, opacity: 0.7 }));
+        g.appendChild(svgEl('circle', { cx: loc.x, cy: loc.y, r: 54 + m * 36, fill: '#ef5b5b', opacity: 0.08 + m * 0.1 }));
+        const t = svgEl('text', { x: loc.x, y: loc.y - 48, fill: '#6a1c1c', 'font-size': 13, 'font-weight': 800, 'text-anchor': 'middle' });
+        t.textContent = i === 0 ? crisisLevel('unrest', frame).toUpperCase() + ' UNREST' : 'PROTEST';
+        g.appendChild(t);
+      });
+    }
+    if (tag === 'bank_run') {
+      const loc = locOf('bank');
+      g.appendChild(svgEl('ellipse', { cx: loc.x, cy: loc.y, rx: 70, ry: 48, fill: '#e8c36a', opacity: 0.28 + m * 0.2 }));
+      const t = svgEl('text', { x: loc.x, y: loc.y - 40, fill: '#5a4a10', 'font-size': 13, 'font-weight': 800, 'text-anchor': 'middle' });
+      t.textContent = crisisLevel('bank_run', frame).toUpperCase() + ' BANK RUN';
+      g.appendChild(t);
+    }
+  });
+}
+
+function updateCrisisBanner(frame) {
+  const el = document.getElementById('crisisBanner');
+  if (!el) return;
+  const crises = (frame && frame.active_crises) || [];
+  if (!crises.length) { el.className = 'glass'; el.innerHTML = ''; return; }
+  const hold = frame.crisis_hold || {};
+  const bits = crises.map(c => {
+    const left = hold[c] != null ? ' · ' + hold[c] + ' ticks left' : '';
+    return crisisLevel(c, frame).toUpperCase() + ' ' + c.replace('_', ' ').toUpperCase() + left;
+  });
+  el.className = 'glass on ' + crises[0];
+  el.innerHTML = '<b>' + escapeHtml(bits.join(' · ')) + '</b>';
 }
 
 function applyMapChrome() {
@@ -292,14 +457,17 @@ function applyMapChrome() {
     const el = document.getElementById(id);
     if (el) el.style.display = on ? '' : 'none';
   };
+  const crises = (latestFrame && latestFrame.active_crises) || [];
   const showTerrain = mapLayers.terrain || mapView === 'topography';
-  const showWater = mapLayers.water || mapView === 'topography';
+  const showWater = mapLayers.water || mapView === 'topography' || crises.includes('flood');
   const showLand = mapView === 'landuse';
-  const showRoads = mapView === 'mobility';
+  const showRoads = mapView === 'mobility' || crises.includes('flood');
+  const showCrisis = mapView === 'topography' || crises.length > 0;
   set('terrainLayer', showTerrain);
   set('waterLayer', showWater);
   set('landuseLayer', showLand);
   set('mobilityLayer', showRoads);
+  set('crisisLayer', showCrisis);
   if (latestFrame) updateTown(latestFrame);
 }
 
@@ -348,6 +516,10 @@ function updateTown(frame) {
   g.innerHTML = '';
   net.innerHTML = '';
   if (cross) cross.innerHTML = '';
+  drawStreets(frame);
+  drawLandUse(frame);
+  drawCrisis(frame);
+  updateCrisisBanner(frame);
   const pos = {};
   const byLoc = {};
   Object.keys(VISUAL).forEach(k => byLoc[k] = []);
@@ -384,14 +556,35 @@ function updateTown(frame) {
     });
   }
   if (mapLayers.crossings && cross) {
-    ((frame.metrics || {}).crossings || []).forEach((c, i) => {
-      cross.appendChild(svgEl('circle', {
-        cx: 720 + i * 18, cy: 300, r: 6, fill: '#f0a14a', opacity: 0.85
+    const pairs = (frame.metrics || {}).crossings || [];
+    pairs.forEach(pair => {
+      const [a, b] = String(pair).split('->');
+      const pa = locOf(DOMAIN_PLACE[a] || 'tavern');
+      const pb = locOf(DOMAIN_PLACE[b] || 'town_hall');
+      cross.appendChild(svgEl('line', {
+        x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y,
+        stroke: '#f0a14a', 'stroke-width': 3, opacity: 0.75
       }));
     });
   }
-  if (mapLayers.anomalies && ((frame.metrics || {}).anomaly_flags || []).length && cross) {
-    cross.appendChild(svgEl('circle', { cx: 760, cy: 260, r: 10, fill: 'none', stroke: '#ef5b5b', 'stroke-width': 2 }));
+  if (mapLayers.anomalies && cross) {
+    ((frame.metrics || {}).anomaly_flags || []).forEach((flag, i) => {
+      const place = flag === 'trade_freeze' ? 'market'
+        : flag === 'chatter_spike' ? 'tavern'
+        : flag === 'wealth_concentration' ? 'bank'
+        : 'town_hall';
+      const loc = locOf(place);
+      cross.appendChild(svgEl('circle', {
+        cx: loc.x + i * 8, cy: loc.y - 36, r: 11, fill: 'none',
+        stroke: '#ef5b5b', 'stroke-width': 2
+      }));
+      const t = svgEl('text', {
+        x: loc.x, y: loc.y - 52, fill: '#6a1c1c', 'font-size': 10,
+        'font-weight': 700, 'text-anchor': 'middle'
+      });
+      t.textContent = String(flag).replace(/_/g, ' ');
+      cross.appendChild(t);
+    });
   }
   placeFloats(frame, pos);
 }
@@ -442,7 +635,10 @@ function placeFloats(frame, pos) {
 
 function selectAgent(id) {
   selectedId = id;
-  if (latestFrame) updateInspector(id, latestFrame);
+  if (latestFrame) {
+    updateInspector(id, latestFrame);
+    renderForensicsLab(latestFrame);
+  }
 }
 
 function consideredBars(considered) {
@@ -461,13 +657,16 @@ function updateInspector(id, frame) {
   const rec = (frame.decision_records || []).find(r => r.agent_id === id);
   const st = frame.agents[id];
   const fid = (frame.factions || {})[id];
+  const role = roleOf(id);
   document.getElementById('inspName').textContent = nameOf(id);
-  document.getElementById('inspMeta').textContent =
-    'Age ' + (24 + (parseInt(id.split('_')[1], 10) || 0)) + ' · ' + roleOf(id) +
-    ' · ' + String(st.location || '').replace('_', ' ') +
-    (fid ? ' · ' + factionName(fid, frame) : ' · unaffiliated');
-  document.getElementById('inspFaith').textContent =
-    faithLabel(id, frame) + (st.piety != null ? ' · piety ' + Math.round(st.piety * 100) + '%' : '');
+  document.getElementById('inspMeta').innerHTML =
+    field('Role', escapeHtml(role), ROLE_MEANING[role] || '') +
+    field('Where', escapeHtml(String(st.location || '').replace('_', ' ')), 'Place they are standing this tick') +
+    field('Faction', escapeHtml(fid ? factionName(fid, frame) : 'none yet'), 'Forms when people keep voting the same way');
+  document.getElementById('inspFaith').innerHTML =
+    field('Faith', escapeHtml(faithLabel(id, frame)) +
+      (st.piety != null ? ' · piety ' + Math.round(st.piety * 100) + '%' : ''),
+      TRAIT_MEANING.piety);
   const face = document.getElementById('inspFace');
   face.style.background = agentColor(id);
   face.textContent = initials(id);
@@ -501,28 +700,51 @@ function renderExtra(id, frame) {
   const a = AGENTS[id] || {};
   const box = document.getElementById('inspExtra');
   if (extraTab === 'profile') {
-    box.innerHTML = (st.location || '').replace('_', ' ') + ' · ' + escapeHtml(faithLabel(id, frame)) +
-      ' · brain ' + escapeHtml(a.decider_kind || 'rule') +
-      (LLM_IDS.includes(id) ? ' (LLM)' : '') +
-      (st.can_vote === false ? ' · no vote' : '');
+    const mind = LLM_IDS.includes(id) ? 'LLM — a language model chose this tick'
+      : 'rule-based — traits and heuristics chose this tick';
+    const vote = st.expelled ? 'expelled — cannot vote'
+      : (st.can_vote === false ? 'vote suspended — temporarily off the roll' : 'on the roll — may vote');
+    box.innerHTML =
+      field('Mind', escapeHtml(a.decider_kind || 'RuleBasedDecider'), mind) +
+      field('Franchise', escapeHtml(vote), 'Who may cast a ballot this tick') +
+      '<div class="legend">Role is the strongest trait. Faith is their congregation. Piety is how hard that faith pulls them. Faction is a voting bloc, not a job title.</div>';
   } else if (extraTab === 'rel') {
     const edges = (frame.relationship_edges || []).filter(e => e[0] === id || e[1] === id);
-    box.innerHTML = edges.length
-      ? edges.map(e => nameOf(e[0] === id ? e[1] : e[0]) + ' · ' + (e[2] >= 0 ? 'ally ' : 'rival ') + Number(e[2]).toFixed(2)).join('<br>')
-      : 'no strong ties yet';
+    box.innerHTML = (edges.length
+      ? edges.map(e => field(
+          nameOf(e[0] === id ? e[1] : e[0]),
+          (e[2] >= 0 ? 'ally ' : 'rival ') + Number(e[2]).toFixed(2),
+          'Score from talk and gossip, about −1 to +1'
+        )).join('')
+      : '<div class="tiny">no strong ties yet</div>') +
+      '<div class="legend">Ally is a positive score from speaking and praise. Rival is negative, usually from gossip or scandal.</div>';
   } else if (extraTab === 'res') {
     const food = (st.inventory && st.inventory.food != null) ? Number(st.inventory.food).toFixed(2) : '0';
-    box.innerHTML = 'Money $' + st.money.toFixed(2) + '<br>Reputation ' + Math.round(st.reputation * 100) +
-      '<br>Food ' + food +
-      '<br>' + (st.expelled ? 'expelled' : (st.can_vote === false ? 'vote suspended' : 'may vote'));
+    const vote = st.expelled ? 'expelled' : (st.can_vote === false ? 'vote suspended' : 'may vote');
+    box.innerHTML =
+      field('Money', '$' + st.money.toFixed(2), 'Coins they hold') +
+      field('Reputation', Math.round(st.reputation * 100) + ' / 100', 'Town standing. Low standing can make someone notorious.') +
+      field('Food', food, 'Private inventory, not the farm stores') +
+      field('Franchise', escapeHtml(vote), 'Whether they can cast a ballot') +
+      '<div class="legend">Reputation is 0–100. Food is what they carry. The farm’s remaining stores are on Topography during a famine.</div>';
   } else if (extraTab === 'traits') {
-    box.innerHTML = Object.entries(a.traits || {}).map(([k, v]) =>
-      k.replace(/_/g, ' ') + ' · ' + Number(v).toFixed(2)).join('<br>') || 'unknown';
+    const traits = Object.entries(a.traits || {});
+    box.innerHTML = (traits.length
+      ? traits.map(([k, v]) => field(
+          k.replace(/_/g, ' '),
+          Number(v).toFixed(2) + ' / 1.00',
+          TRAIT_MEANING[k] || 'Disposition from 0 (low) to 1 (high)'
+        )).join('')
+      : '<div class="tiny">unknown</div>') +
+      '<div class="legend">Each trait is 0 to 1. The highest one is the role on the profile (Maker, Organizer, Mediator, Clerk, or Speculator).</div>';
   } else {
     const rec = (frame.decision_records || []).find(r => r.agent_id === id);
     const pool = (st.memories && st.memories.length) ? st.memories : ((rec && rec.retrieved_memories) || []);
     const shown = filterMemories(pool);
-    box.innerHTML = shown.map(escapeHtml).join('<br>') || 'no memories in this filter';
+    box.innerHTML = (shown.length
+      ? shown.map(escapeHtml).join('<br>')
+      : 'no memories in this filter') +
+      '<div class="legend">These are things this person remembers. The filter above keeps political, social, economic, or invention memories.</div>';
   }
 }
 
@@ -604,22 +826,190 @@ function updateTimeline(frame) {
 
 function renderPeople(frame) {
   const el = document.getElementById('peopleList');
-  el.innerHTML = Object.keys(frame.agents).map(id => {
+  if (!el) return;
+  const q = ((document.getElementById('peopleSearch') || {}).value || '').toLowerCase();
+  el.innerHTML = Object.keys(frame.agents).filter(id => {
+    const blob = (nameOf(id) + ' ' + roleOf(id) + ' ' + faithLabel(id, frame) + ' ' + (frame.agents[id].location || '')).toLowerCase();
+    return !q || blob.indexOf(q) >= 0;
+  }).map(id => {
     const fid = (frame.factions || {})[id];
     return '<div class="person" data-id="' + id + '"><div class="avatar" style="background:' + agentColor(id) +
-      '"></div><div><b>' + escapeHtml(nameOf(id)) + '</b><div class="tiny">' + roleOf(id) +
-      ' · ' + escapeHtml(faithLabel(id, frame)) +
-      (fid ? ' · ' + escapeHtml(factionName(fid, frame)) : '') +
-      (id === frame.town_leader_id ? ' · leader' : '') +
-      (frame.agents[id].expelled ? ' · expelled' : (frame.agents[id].can_vote === false ? ' · no vote' : '')) +
-      ' · ' + escapeHtml(String(frame.agents[id].location || '').replace('_', ' ')) + '</div></div></div>';
+      '"></div><div><b>' + escapeHtml(nameOf(id)) + '</b><div class="tiny" title="' +
+      escapeHtml(ROLE_MEANING[roleOf(id)] || '') + '">role ' + escapeHtml(roleOf(id)) +
+      ' · faith ' + escapeHtml(faithLabel(id, frame)) +
+      (fid ? ' · faction ' + escapeHtml(factionName(fid, frame)) : '') +
+      (id === frame.town_leader_id ? ' · town leader' : '') +
+      (frame.agents[id].expelled ? ' · expelled' : (frame.agents[id].can_vote === false ? ' · vote suspended' : '')) +
+      ' · at ' + escapeHtml(String(frame.agents[id].location || '').replace('_', ' ')) + '</div></div></div>';
   }).join('');
   el.querySelectorAll('.person').forEach(node => {
     node.addEventListener('click', () => selectAgent(node.dataset.id));
   });
 }
 
+function renderRelationships(frame) {
+  const el = document.getElementById('relBody');
+  if (!el) return;
+  const edges = (frame.relationship_edges || []).slice().sort((a, b) => Math.abs(b[2]) - Math.abs(a[2]));
+  if (!edges.length) { el.innerHTML = 'no strong ties yet'; return; }
+  el.innerHTML = edges.map(([a, b, w]) =>
+    '<div class="lab-row"><b>' + escapeHtml(nameOf(a)) + ' · ' + escapeHtml(nameOf(b)) + '</b>' +
+    (w >= 0 ? 'ally ' : 'rival ') + Number(w).toFixed(2) + '</div>'
+  ).join('');
+}
+
+function renderPolitics(frame) {
+  const el = document.getElementById('polBody');
+  if (!el) return;
+  const props = frame.open_proposals || [];
+  const enacted = frame.enacted_proposals || [];
+  const names = frame.faction_names || {};
+  const members = {};
+  Object.entries(frame.factions || {}).forEach(([id, fid]) => {
+    (members[fid] = members[fid] || []).push(nameOf(id));
+  });
+  const voters = Object.entries(frame.agents).filter(([, st]) => st.can_vote !== false && !st.expelled);
+  const leader = frame.town_leader_id ? nameOf(frame.town_leader_id) : 'none';
+  let html = '<div class="lab-row"><b>Leader</b>' + escapeHtml(leader) + ' · ' + voters.length + ' on the roll</div>';
+  html += '<div class="tiny" style="margin:8px 0 4px">OPEN PROPOSALS</div>';
+  html += props.length ? props.map(p => {
+    const votes = Object.values(p.votes || {});
+    const yes = votes.filter(v => v === 'yes').length;
+    const no = votes.filter(v => v === 'no').length;
+    return '<div class="lab-row"><b>#' + p.proposal_id + ' ' + escapeHtml((p.rule_type || '').replace(/_/g, ' ')) +
+      (p.deadlock ? ' · DEADLOCK' : '') + '</b>yes ' + yes + ' · no ' + no +
+      ' · quorum ' + votes.length + '/' + (p.quorum_needed || '?') + '</div>';
+  }).join('') : '<div class="tiny">none open</div>';
+  html += '<div class="tiny" style="margin:8px 0 4px">ENACTED</div>';
+  html += enacted.length ? enacted.map(p =>
+    '<div class="lab-row"><b>#' + p.proposal_id + ' ' + escapeHtml((p.rule_type || '').replace(/_/g, ' ')) + '</b></div>'
+  ).join('') : '<div class="tiny">no standing laws</div>';
+  html += '<div class="tiny" style="margin:8px 0 4px">FACTIONS</div>';
+  const fids = Object.keys(members);
+  html += fids.length ? fids.map(fid =>
+    '<div class="lab-row"><b>' + escapeHtml(names[fid] || fid) + '</b>' + members[fid].map(escapeHtml).join(', ') + '</div>'
+  ).join('') : '<div class="tiny">no factions yet</div>';
+  el.innerHTML = html;
+}
+
+function renderForensicsLab(frame) {
+  const el = document.getElementById('forensicBody');
+  if (!el) return;
+  const q = ((document.getElementById('forensicSearch') || {}).value || '').toLowerCase();
+  const rows = [];
+  if (selectedId && frame.agents[selectedId]) {
+    const st = frame.agents[selectedId];
+    (st.memories || []).forEach(m => rows.push({ who: nameOf(selectedId), text: m, kind: classifyMemory(m) }));
+  }
+  feedLog.slice(0, 40).forEach(e => {
+    rows.push({ who: 'town', text: e.kind + ' t' + e.tick, kind: e.kind });
+  });
+  const shown = rows.filter(r => !q || (r.who + ' ' + r.text + ' ' + r.kind).toLowerCase().indexOf(q) >= 0);
+  el.innerHTML = (selectedId ? '<div class="tiny" style="margin-bottom:8px">selected ' + escapeHtml(nameOf(selectedId)) + '</div>' : '') +
+    (shown.length ? shown.slice(0, 24).map(r =>
+      '<div class="lab-row"><b>' + escapeHtml(r.who) + '</b>' + escapeHtml(r.text) + '</div>'
+    ).join('') : '<div class="tiny">nothing in this search</div>');
+}
+
+function vitalsOf(frame) {
+  const counts = (frame.metrics || {}).location_counts || {};
+  return {
+    tick: frame.tick,
+    gini: (frame.metrics || {}).gini,
+    happy: Math.round(happiness(frame) * 100) + '%',
+    treasury: frame.treasury,
+    crises: (frame.active_crises || []).join(', ') || 'none',
+    laws: lawCount(frame.active_rules, frame.enacted_proposals),
+    proposals: (frame.open_proposals || []).length,
+    inventions: (frame.inventions || []).map(i => i.name || i.kind).join(', ') || 'none',
+    occupancy: Object.entries(counts).filter(([, n]) => n).map(([k, n]) => k.replace('_', ' ') + ' ' + n).join(', ') || 'empty'
+  };
+}
+
+function saveCheckpoint() {
+  if (!latestFrame) return;
+  const snap = JSON.parse(JSON.stringify(latestFrame));
+  checkpoints.push({ id: checkpoints.length + 1, tick: snap.tick, frame: snap });
+  if (checkpoints.length > 8) checkpoints.shift();
+  const note = document.getElementById('forkNote');
+  if (note) note.textContent = 'Saved: ' + checkpoints.map(c => 't' + c.tick).join(', ');
+  renderExperiments();
+}
+
+function renderExperiments() {
+  const el = document.getElementById('checkpointList');
+  if (!el) return;
+  if (!checkpoints.length) { el.innerHTML = 'no checkpoints yet'; return; }
+  el.innerHTML = checkpoints.map((c, i) =>
+    '<div class="lab-row"><b>#' + c.id + ' tick ' + c.tick + '</b>' +
+    '<button type="button" data-show="' + i + '">show on map</button> ' +
+    '<button type="button" data-keep="' + i + '">use in compare</button></div>'
+  ).join('');
+  el.querySelectorAll('[data-show]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const c = checkpoints[Number(btn.dataset.show)];
+      if (!c) return;
+      viewingCheckpoint = c.tick;
+      setLab('observe');
+      updateTown(c.frame);
+      updateHeader(c.frame);
+      const status = document.getElementById('status');
+      if (status) status.textContent = 'viewing t' + c.tick;
+    });
+  });
+  el.querySelectorAll('[data-keep]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      btn.classList.toggle('primary');
+      renderCompare();
+    });
+  });
+}
+
+function renderCompare() {
+  const box = document.getElementById('compareBox');
+  if (!box) return;
+  const picked = [...document.querySelectorAll('#checkpointList .primary')].map(b => checkpoints[Number(b.dataset.keep)]).filter(Boolean);
+  if (picked.length < 2) {
+    box.innerHTML = picked.length ? 'pick a second checkpoint' : '';
+    return;
+  }
+  const [a, b] = picked.slice(-2).map(c => vitalsOf(c.frame));
+  const row = (k) => '<div class="lab-row"><b>' + k + '</b>t' + a.tick + ': ' + a[k] + '<br>t' + b.tick + ': ' + b[k] + '</div>';
+  box.innerHTML = '<b>Compare t' + a.tick + ' vs t' + b.tick + '</b>' +
+    ['gini', 'happy', 'treasury', 'crises', 'laws', 'proposals', 'inventions', 'occupancy'].map(row).join('');
+}
+
+function setLab(mode) {
+  if (mode === 'economy') return;
+  labMode = mode || 'observe';
+  document.body.dataset.lab = labMode;
+  document.querySelectorAll('#rail .navbtn[data-lab]').forEach(a => {
+    a.classList.toggle('active', a.dataset.lab === labMode);
+  });
+  document.querySelectorAll('.lab-panel').forEach(p => {
+    p.classList.toggle('open', p.dataset.lab === labMode);
+  });
+  if (labMode === 'relationships') {
+    mapView = 'social';
+    mapLayers.relationships = true;
+    const box = document.querySelector('#layerMenu [data-layer="relationships"]');
+    if (box) box.checked = true;
+    const trig = document.getElementById('viewTrigger');
+    if (trig) trig.textContent = 'View · Social graph';
+    applyMapChrome();
+  }
+  if (latestFrame) {
+    renderPeople(latestFrame);
+    renderRelationships(latestFrame);
+    renderPolitics(latestFrame);
+    renderForensicsLab(latestFrame);
+    renderExperiments();
+    if (selectedId) updateInspector(selectedId, latestFrame);
+  }
+}
+
 function renderFrame(frame) {
+  if (viewingCheckpoint != null) return;
   updateHeader(frame);
   recordMetrics(frame);
   ingestFeed(frame);
@@ -628,15 +1018,14 @@ function renderFrame(frame) {
   updateProposal(frame);
   updateTimeline(frame);
   renderPeople(frame);
+  renderRelationships(frame);
+  renderPolitics(frame);
+  renderForensicsLab(frame);
   if (!selectedId) {
     const first = Object.keys(frame.agents || {})[0];
     if (first) selectedId = first;
   }
   if (selectedId) updateInspector(selectedId, frame);
-}
-
-function togglePeople(on) {
-  document.getElementById('peopleDrawer').style.display = on ? 'block' : 'none';
 }
 
 document.querySelectorAll('.tab').forEach(tab => {
@@ -672,42 +1061,73 @@ document.querySelectorAll('#viewMenu [data-view]').forEach(row => {
     closeMenus();
   });
 });
-document.getElementById('navPeople').addEventListener('click', (ev) => {
-  ev.preventDefault();
-  const drawer = document.getElementById('peopleDrawer');
-  togglePeople(drawer.style.display !== 'block');
+document.querySelectorAll('#rail .navbtn[data-lab]').forEach(a => {
+  a.addEventListener('click', (ev) => {
+    if (a.dataset.lab === 'economy') return;
+    ev.preventDefault();
+    viewingCheckpoint = null;
+    history.replaceState(null, '', '#' + a.dataset.lab);
+    setLab(a.dataset.lab);
+  });
 });
-document.getElementById('navRel').addEventListener('click', (ev) => {
-  ev.preventDefault();
-  mapLayers.relationships = !mapLayers.relationships;
-  const box = document.querySelector('#layerMenu [data-layer="relationships"]');
-  if (box) box.checked = mapLayers.relationships;
-  ev.currentTarget.classList.toggle('active', mapLayers.relationships);
-  applyMapChrome();
+window.addEventListener('hashchange', () => {
+  const mode = (location.hash || '#observe').slice(1);
+  if (mode && mode !== 'economy') setLab(mode);
 });
-document.getElementById('navPol').addEventListener('click', (ev) => {
-  ev.preventDefault();
-  document.getElementById('proposalCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+const peopleSearch = document.getElementById('peopleSearch');
+if (peopleSearch) peopleSearch.addEventListener('input', () => { if (latestFrame) renderPeople(latestFrame); });
+const forensicSearch = document.getElementById('forensicSearch');
+if (forensicSearch) forensicSearch.addEventListener('input', () => { if (latestFrame) renderForensicsLab(latestFrame); });
+const saveBtn = document.getElementById('saveCheckpointBtn');
+if (saveBtn) saveBtn.addEventListener('click', saveCheckpoint);
+const liveBtn = document.getElementById('returnLiveBtn');
+if (liveBtn) liveBtn.addEventListener('click', () => {
+  viewingCheckpoint = null;
+  if (latestFrame) {
+    updateTown(latestFrame);
+    updateHeader(latestFrame);
+    const status = document.getElementById('status');
+    if (status) status.textContent = paused ? 'paused' : 'live';
+  }
 });
-document.getElementById('navFor').addEventListener('click', (ev) => {
-  ev.preventDefault();
-  extraTab = 'mem';
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.tab === 'mem'));
-  if (selectedId && latestFrame) renderExtra(selectedId, latestFrame);
-});
-document.getElementById('navExp').addEventListener('click', (ev) => {
-  ev.preventDefault();
-  document.getElementById('moreMenu').querySelector('.menu-trigger').click();
-});
-document.getElementById('forkSim').addEventListener('click', () => { markFork(); closeMenus(); });
 document.addEventListener('click', (ev) => {
   if (!ev.target.closest('#injectWrap')) {
     const menu = document.getElementById('injectMenu');
     if (menu) menu.style.display = 'none';
   }
 });
+window.onCrisisInjected = (kind) => {
+  if (['flood', 'famine', 'unrest'].includes(kind)) {
+    mapView = 'topography';
+    document.querySelectorAll('#viewMenu .menu-row').forEach(r => r.classList.toggle('is-on', r.dataset.view === 'topography'));
+    const trig = document.getElementById('viewTrigger');
+    if (trig) trig.textContent = 'View · Topography';
+    applyMapChrome();
+  }
+};
 
-bootLab(drawStaticTown);
+window.saveCheckpoint = saveCheckpoint;
+window.renderCompareFromMenu = () => {
+  setLab('experiments');
+  if (checkpoints.length < 2) {
+    const box = document.getElementById('compareBox');
+    if (box) box.innerHTML = 'Save two checkpoints first.';
+    return;
+  }
+  renderExperiments();
+  const last = [checkpoints.length - 2, checkpoints.length - 1];
+  last.forEach(i => {
+    const btn = document.querySelector('#checkpointList [data-keep="' + i + '"]');
+    if (btn) btn.classList.add('primary');
+  });
+  renderCompare();
+};
+
+bootLab(() => {
+  drawStaticTown();
+  const mode = (location.hash || '#observe').slice(1);
+  if (mode && mode !== 'observe') setLab(mode);
+});
 </script>
 </body>
 </html>

@@ -161,8 +161,9 @@ Two towns means two processes. If 8765 is taken, change `PORT` in
 | `static/` | Town backdrop, brand marks, favicon |
 
 Locations the simulation uses: `farm`, `workshop`, `market`,
-`town_hall`, `tavern`. The Observe map also labels scenic landmarks
-(clinic, park, bank, homes) that agents do not enter.
+`town_hall`, `tavern`, `chapel`, `park`, `clinic`, `bank`, `homes`.
+Agents walk one open street per tick; a flood can close the bridge
+and greenways.
 
 ## Architecture
 
@@ -311,7 +312,8 @@ were found. Re-run it after changing `decision.py`, `economy.py`,
 - One simulation per server process. Two towns means two processes
   on different ports.
 - Analytics charts need a network path to cdnjs for Chart.js.
-- Scenic map labels (clinic, park, bank, homes) are visual only.
+- Agents walk one street per tick. A flood closes the bridge and,
+  at higher intensity, the greenway and country road.
 
 ## Trace format (`record_demo.py`)
 

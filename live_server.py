@@ -202,11 +202,13 @@ class SimulationBroadcaster:
                         "text": text[:160],
                     })
                     del self.engine.world.notice_board[:-8]
-                elif kind in ("famine", "unrest", "bank_run", "market_shock"):
+                elif kind in ("famine", "unrest", "bank_run", "market_shock", "flood"):
                     info = chaos.inject_crisis(
                         self.engine.world, self.engine.agents,
                         kind, intensity, self.engine.rng,
                     )
+                    frame = self.recorder.peek()
+                    self._broadcast("frame", {"frame": frame, "elapsed_seconds": 0, "painted": True})
                     return {
                         "paused": self.paused, "delay": self.delay,
                         "tick": self.engine.world.tick, **info,

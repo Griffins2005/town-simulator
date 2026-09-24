@@ -42,6 +42,7 @@ import analytics
 import chaos
 import decision_record
 import economy
+import geography
 import governance
 import faith
 import inventions
@@ -397,6 +398,10 @@ class Engine:
             nearby_faiths={aid: getattr(self.agents[aid].persona, "faith", "unaffiliated")
                            for aid in others_here},
             proposer_faith=proposer_faith,
+            street_neighbors=geography.neighbors(agent.location, self.world),
+            reachable=geography.reachable(agent.location, self.world),
+            space=geography.space(agent.location),
+            blocked_streets=sorted(geography.blocked_kinds(self.world)),
         )
 
     def _welcome_replacements(self) -> None:

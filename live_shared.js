@@ -73,7 +73,8 @@ function classifyMemory(text) {
   const t = String(text || '').toLowerCase();
   if (/invent|pump|adopt|workshop|catalog/.test(t)) return 'inventions';
   if (/vote|proposal|lobby|faction|curfew|repeal|expel|suspend|rule_|welcome|deadlock/.test(t)) return 'political';
-  if (/trade|money|food|work|demurrage|tax|bank/.test(t)) return 'economic';
+  if (/unrest|protest|road_closed|bridge|greenway/.test(t)) return 'political';
+  if (/flood|famine|food|trade|money|work|demurrage|tax|bank/.test(t)) return 'economic';
   if (/gossip|speak|chapel|faith|piety|heard_|relationship|welcome/.test(t)) return 'social';
   return 'social';
 }
@@ -88,7 +89,8 @@ function roleOf(id) {
   };
   return map[pairs[0][0]] || 'Resident';
 }
-function lawCount(rules) {
+function lawCount(rules, enacted) {
+  if (Array.isArray(enacted) && enacted.length) return enacted.length;
   let n = 0;
   if (rules && ('wealth_tax_rate' in rules)) n++;
   if (rules && ('curfew_after_tick_of_day' in rules)) n++;
@@ -138,7 +140,12 @@ function eventTitle(kind) {
 function describeEvent(e) {
   const quoted = e.said ? ': "' + escapeHtml(e.said) + '"' : '';
   if (e.kind === 'speak') return nameOf(e.agent) + ' talks to ' + nameOf(e.to) + quoted;
-  if (e.kind === 'move') return nameOf(e.agent) + ' moves to ' + String(e.to).replace('_', ' ');
+  if (e.kind === 'move') {
+    const dest = String(e.to || '').replace('_', ' ');
+    if (e.heading) return nameOf(e.agent) + ' walks toward ' + String(e.heading).replace('_', ' ') + ' (now at ' + dest + ')';
+    return nameOf(e.agent) + ' moves to ' + dest;
+  }
+  if (e.kind === 'road_closed') return nameOf(e.agent) + ' cannot reach ' + String(e.attempted || '').replace('_', ' ') + ' — the road is closed';
   if (e.kind === 'gossip') return nameOf(e.agent) + ' gossips about ' + nameOf(e.about) + quoted;
   if (e.kind === 'lobby_succeeded') return nameOf(e.agent) + ' convinces ' + nameOf(e.to) + ' to vote ' + e.lean;
   if (e.kind === 'lobby_failed') return nameOf(e.to) + ' refuses ' + nameOf(e.agent);
@@ -154,8 +161,11 @@ function describeEvent(e) {
   if (e.kind === 'vote_cast') return nameOf(e.by) + ' votes ' + e.choice;
   if (e.kind === 'trade_completed') return nameOf(e.from_) + ' trades with ' + nameOf(e.to);
   if (e.kind === 'corruption_scandal') return nameOf(e.agent) + ' embezzled ' + e.skimmed + '!';
-  if (e.kind === 'crisis_started') return 'crisis: ' + e.crisis + ' begins';
-  if (e.kind === 'crisis_ended') return 'crisis: ' + e.crisis + ' ends';
+  if (e.kind === 'crisis_started') {
+    const mag = e.intensity || e.magnitude;
+    return (e.intensity ? e.intensity + ' ' : '') + e.crisis + ' begins' + (mag != null && e.intensity == null ? ' (' + mag + ')' : '');
+  }
+  if (e.kind === 'crisis_ended') return (e.crisis || 'crisis') + ' ends';
   if (e.kind === 'rule_proposed') return nameOf(e.by) + ' proposes ' + e.rule_type;
   if (e.kind === 'rule_repealed') return 'a rule was repealed';
   if (e.kind === 'faction_joined') return nameOf(e.agent) + ' aligns with ' + escapeHtml(factionName(e.faction));
@@ -199,7 +209,7 @@ function updateHeader(frame) {
   if (dEl) dEl.textContent = delta;
   set('giniLabel', m.gini != null ? Number(m.gini).toFixed(2) : '—');
   set('happyLabel', Math.round(happy * 100) + '%');
-  set('lawsLabel', lawCount(frame.active_rules));
+  set('lawsLabel', lawCount(frame.active_rules, frame.enacted_proposals));
   set('propLabel', (frame.open_proposals || []).length);
   const lead = frame.town_leader_id;
   const leadEl = document.getElementById('leaderLabel');
@@ -261,6 +271,10 @@ function ingestFeed(frame) {
   feedLog.splice(80);
 }
 function markFork() {
+  if (typeof window.saveCheckpoint === 'function') {
+    window.saveCheckpoint();
+    return;
+  }
   if (!latestFrame) return;
   forkMarks.push({
     tick: latestFrame.tick,
@@ -274,6 +288,10 @@ function markFork() {
   if (note) note.textContent = 'Marked: ' + forkMarks.map(m => 't' + m.tick).join(' vs ');
 }
 function compareForks() {
+  if (typeof window.renderCompareFromMenu === 'function') {
+    window.renderCompareFromMenu();
+    return;
+  }
   const box = document.getElementById('compareBox');
   if (!box) return;
   if (forkMarks.length < 2) {
@@ -399,13 +417,15 @@ function bindSharedControls() {
   });
   document.querySelectorAll('#injectMenu [data-crisis]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      await sendControl({
+      const kind = btn.getAttribute('data-crisis');
+      const info = await sendControl({
         cmd: 'inject',
-        kind: btn.getAttribute('data-crisis'),
+        kind,
         intensity: btn.getAttribute('data-intensity') || 'serious'
       });
       const menu = document.getElementById('injectMenu');
       if (menu) menu.style.display = 'none';
+      if (typeof window.onCrisisInjected === 'function') window.onCrisisInjected(kind, info);
     });
   });
   const mark = document.getElementById('markFork');
