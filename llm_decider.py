@@ -98,8 +98,8 @@ def resolve_model(name: str | None = None) -> str:
 # rather than importing actions.py, to avoid this module depending on
 # the whole action-execution stack just to know action NAMES).
 _VALID_ACTIONS = [
-    "move", "work", "trade_offer", "trade_accept", "trade_reject",
-    "speak", "gossip", "propose_rule", "vote", "lobby", "invent", "adopt_invention",
+    "move", "work", "trade_offer", "trade_accept", "trade_reject", "trade_counter",
+    "bid", "speak", "gossip", "propose_rule", "vote", "lobby", "invent", "adopt_invention",
     "worship", "convert", "idle",
 ]
 
@@ -127,7 +127,9 @@ _INTENT_SCHEMA = {
         # of decision.py's Intent needed to change.
         "destination": {"type": ["string", "null"], "description": "for move"},
         "to": {"type": ["string", "null"], "description": "agent_id for trade_offer/trade_accept/trade_reject/speak/gossip"},
-        "offer_id": {"type": ["integer", "null"], "description": "for trade_accept/trade_reject"},
+        "offer_id": {"type": ["integer", "null"], "description": "for trade_accept/trade_reject/trade_counter"},
+        "auction_id": {"type": ["integer", "null"], "description": "for bid"},
+        "bid_amount": {"type": ["number", "null"], "description": "sealed bid amount"},
         "give_item": {"type": ["string", "null"], "description": "item name for trade_offer, e.g. food"},
         "give_amount": {"type": ["number", "null"], "description": "quantity of give_item for trade_offer"},
         "want_item": {"type": ["string", "null"], "description": "item name wanted in return, e.g. money"},
@@ -152,7 +154,8 @@ _INTENT_SCHEMA = {
         },
     },
     "required": [
-        "action", "destination", "to", "offer_id", "give_item", "give_amount",
+        "action", "destination", "to", "offer_id", "auction_id", "bid_amount",
+        "give_item", "give_amount",
         "want_item", "want_amount", "about", "rule_type", "rule_after_tick_of_day",
         "rule_period", "rule_tax_rate", "rule_tax_threshold", "rule_target_proposal_id",
         "rule_target_agent_id", "proposal_id", "vote_choice", "invention_kind", "invention_id",
@@ -173,6 +176,8 @@ Valid actions and which fields each one uses (all others should be null):
 - work: (no fields needed)
 - trade_offer: to, give_item, give_amount, want_item, want_amount
 - trade_accept / trade_reject: offer_id
+- trade_counter: offer_id, want_item=money, want_amount as the new price. Bargain, do not invent goods.
+- bid: auction_id, bid_amount. Sealed. First bid sticks. Food lot is second-price; public work is lowest bid. You must be at the market and hold the coins.
 - speak: to, optionally say
 - gossip: about, optionally to, optionally say (make it specific: scandal, expulsion, welcome)
 - propose_rule: rule_type ("curfew", "wealth_tax", "repeal", "expel", "suspend_vote",
@@ -283,6 +288,21 @@ def _build_user_prompt(perception):
         lines.extend(f"  - {m}" for m in p.recent_memories)
     if p.pending_trade_offers:
         lines.append(f"Trade offers waiting for your response: {p.pending_trade_offers}.")
+        lines.append("You may trade_counter with a new money price (Nash split), or accept, or reject. Two counters max.")
+    net = getattr(p, "network", None) or {}
+    if net:
+        lines.append(
+            f"Your social-graph position: degree {net.get('degree', 0)}, "
+            f"betweenness {net.get('betweenness', 0)}, "
+            f"clustering {net.get('clustering', 0)}, broker={net.get('broker')}."
+        )
+    town_net = getattr(p, "network_town", None) or {}
+    if town_net:
+        lines.append(f"Town network density {town_net.get('density')}, components {town_net.get('components')}.")
+    if getattr(p, "open_auctions", None):
+        lines.append(f"Open market auctions (bid only at market): {p.open_auctions}.")
+    if getattr(p, "pivotal_votes", None):
+        lines.append(f"Your ballot is PIVOTAL on proposals {p.pivotal_votes} — you can flip pass/fail.")
     if p.open_proposals:
         lines.append(f"Open governance proposals (quorum/pass/deadlock annotated): {p.open_proposals}.")
     if getattr(p, "can_vote", True) is False:
@@ -705,6 +725,13 @@ class LLMDecider:
             return args
         if action in ("trade_accept", "trade_reject"):
             return {"offer_id": data.get("offer_id")}
+        if action == "trade_counter":
+            args = {"offer_id": data.get("offer_id")}
+            if data.get("want_item"):
+                args["want"] = {data.get("want_item"): data.get("want_amount") or 0}
+            return args
+        if action == "bid":
+            return {"auction_id": data.get("auction_id"), "amount": data.get("bid_amount")}
         if action == "speak":
             return {"to": data.get("to")}
         if action == "gossip":

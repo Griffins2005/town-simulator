@@ -167,6 +167,10 @@ class Perception:
     succession_candidates: list = field(default_factory=list)
     impeach_justified: bool = False
     leader_solvency: str | None = None
+    network: dict = field(default_factory=dict)
+    network_town: dict = field(default_factory=dict)
+    open_auctions: list = field(default_factory=list)
+    pivotal_votes: list = field(default_factory=list)
 
 
 @dataclass
@@ -267,7 +271,23 @@ class RuleBasedDecider:
         if p.pending_trade_offers:
             offer = p.pending_trade_offers[0]
             return take(self._respond_to_trade(agent_id, p, offer),
-                        "resolve a pending trade offer first", 0.92)
+                        "resolve a pending bargain first", 0.92)
+
+        auctions = [a for a in (getattr(p, "open_auctions", None) or [])
+                    if p.self_location == "market"]
+        if auctions and "bank_run" not in p.active_crises:
+            bid = self._maybe_bid(agent_id, p, auctions[0])
+            if bid is not None:
+                return take(bid, "seal a bid at the market", 0.8)
+        lots = getattr(p, "open_auctions", None) or []
+        if lots and p.self_location != "market" and "bank_run" not in p.active_crises:
+            food = float((p.self_inventory or {}).get("food") or 0)
+            hungry_lot = any(a.get("kind") == "food_lot" for a in lots)
+            wage_lot = any(a.get("kind") == "public_work" for a in lots)
+            if ((hungry_lot and food < 2.2 and p.self_money >= 2)
+                    or (wage_lot and getattr(p, "self_solvency", "ok") != "ok")):
+                return take(Intent(action="move", args={"destination": "market"}),
+                            "walk to the sealed bid", 0.78)
 
         # Outcasts slink to the tavern and sour the room -- they cannot
         # vote, but gossip is how notoriety and welcome talk stay alive.
@@ -670,7 +690,39 @@ class RuleBasedDecider:
         tolerance = 1.0 + (p.self_generosity * 0.5) - p.trade_fairness_bonus
         if price_ratio <= tolerance:
             return Intent(action="trade_accept", args={"offer_id": offer["offer_id"]})
+        rounds = int(offer.get("rounds") or 0)
+        if rounds < 2 and price_ratio < tolerance + 0.55:
+            fair_ask = food_offered * self.FAIR_PRICE_PER_UNIT
+            mid = round((fair_ask + money_asked) / 2, 2)
+            if mid > 0 and mid < money_asked:
+                return Intent(
+                    action="trade_counter",
+                    args={"offer_id": offer["offer_id"], "want": {"money": mid}},
+                    say=f"I will pay {mid}, not {money_asked}.",
+                )
         return Intent(action="trade_reject", args={"offer_id": offer["offer_id"]})
+
+    def _maybe_bid(self, agent_id: str, p: Perception, auction: dict) -> Intent | None:
+        """Vickrey / reverse auction: bid near reservation, first seal sticks."""
+        if agent_id in (auction.get("bids") or {}):
+            return None
+        kind = auction.get("kind")
+        if kind == "food_lot":
+            food = float((p.self_inventory or {}).get("food") or 0)
+            if food >= 2.2 or p.self_money < 2:
+                return None
+            value = self.FAIR_PRICE_PER_UNIT * float((auction.get("lot") or {}).get("food") or 1.5)
+            shade = 0.12 + 0.2 * (1.0 - p.self_risk_tolerance)
+            amount = round(min(p.self_money * 0.45, value * (1.0 - shade)), 2)
+            if amount < 0.8:
+                return None
+            return Intent(action="bid", args={"auction_id": auction["auction_id"], "amount": amount})
+        if kind == "public_work":
+            if p.self_solvency == "ok" and p.self_money > 10:
+                return None
+            ask = round(3.5 + 3.0 * (1.0 - p.self_industriousness), 2)
+            return Intent(action="bid", args={"auction_id": auction["auction_id"], "amount": ask})
+        return None
 
     def _initiate_trade(self, agent_id: str, p: Perception, food_held: float) -> Intent:
         """Construct a speculative trade_offer of surplus food (above
@@ -783,6 +835,12 @@ class RuleBasedDecider:
         elif p.proposer_faith and p.self_faith != "unaffiliated" and p.proposer_faith != p.self_faith:
             yes_probability = max(0.08, yes_probability - 0.08 * p.self_piety)
 
+        if proposal.get("proposal_id") in (getattr(p, "pivotal_votes", None) or []):
+            if proposal.get("rule_type") == "wealth_tax" and p.self_money >= 12:
+                yes_probability = max(0.08, yes_probability - 0.22)
+            else:
+                yes_probability = min(0.92, yes_probability + 0.14 * (p.network or {}).get("betweenness", 0) * 4)
+            yes_probability = min(0.95, yes_probability + 0.1)
         vote = "yes" if self.rng.random() < yes_probability else "no"
         return Intent(action="vote", args={"proposal_id": proposal["proposal_id"], "choice": vote})
 
@@ -795,9 +853,10 @@ class RuleBasedDecider:
         rite_open = any(prop.get("rule_type") in ("festival", "water_blessing")
                         for prop in p.open_proposals)
         faith_lead = getattr(p, "is_faith_leader", False) and rite_open
-        if not (p.is_leader or faith_lead or sponsor or deadlock or p.active_crises):
+        broker = bool((getattr(p, "network", None) or {}).get("broker"))
+        if not (p.is_leader or faith_lead or sponsor or deadlock or p.active_crises or broker):
             return None
-        if not (p.is_leader or faith_lead or sponsor) and not deadlock:
+        if not (p.is_leader or faith_lead or sponsor or broker) and not deadlock:
             return None
         here = [t for t in p.lobby_targets if t.get("id") in p.location_agents]
         pick = here[0] if here else p.lobby_targets[0]

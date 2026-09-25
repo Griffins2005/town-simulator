@@ -267,9 +267,17 @@ Brand assets live in `static/` (`eidolon-appicon.png`,
 
 ## What a run actually does
 
-- **Economy** — work at the farm, two-step trade, demurrage into the
-  treasury, periodic redistribution. Total money (agents + treasury)
-  is conserved.
+- **Economy** — work at the farm, two-step trade, Nash-style
+  counters on the money side, sealed bids at the market (Vickrey food
+  lot; reverse auction for public work), demurrage into the treasury,
+  periodic redistribution. Total money (agents + treasury) is
+  conserved. A bid cannot spend coins the agent does not hold.
+- **Networks** — the social graph is ties above a threshold. Degree,
+  clustering, betweenness, and brokerage (neighbors in two factions)
+  sit in Perception. Brokers can lobby a deadlock.
+- **Bargaining / votes** — a second vote still sticks the first. A
+  counter is the bargain path. A pivotal voter can flip pass/fail and
+  knows it.
 - **Governance** — `curfew`, `wealth_tax`, and `repeal` share one
   propose / vote / enact pipeline. Curfew can block movement; a tax
   collects and redistributes; repeal removes enacted keys.

@@ -46,6 +46,7 @@ import geography
 import governance
 import faith
 import inventions
+import networks
 import town_factory
 from world import World
 
@@ -129,8 +130,10 @@ class Engine:
         # housekeeping) correctly show no buzz yet, rather than raising
         # on a missing attribute.
         self._current_buzz: dict = {}
+        self._network: dict = {}
         self.last_decision_records: list[dict] = []
         governance.ensure_office(self.world, self.agents)
+        self._network = networks.snapshot(self.agents, self.world, economy.trade_pairs())
 
     def step(self) -> None:
         """Advance the simulation by exactly one tick."""
@@ -277,6 +280,8 @@ class Engine:
         # so it can run any time after that -- grouped here with the
         # other chaos housekeeping for readability.
         self._current_buzz = chaos.update_speculation_buzz(self.world, self.agents)
+        economy.tick_auctions(self.world, self.agents, self.rng)
+        self._network = networks.snapshot(self.agents, self.world, economy.trade_pairs())
 
         # Faction formation reads THIS tick's vote_cast events, which
         # governance.tick() (above) may have just resolved into a
@@ -341,6 +346,14 @@ class Engine:
         if getattr(perception, "is_faith_leader", False) and getattr(perception, "worship_now", False):
             return True
         if getattr(perception, "office_vacant", False) and perception.can_vote:
+            return True
+        if getattr(perception, "open_auctions", None):
+            if perception.self_location == "market":
+                return True
+            food = float((perception.self_inventory or {}).get("food") or 0)
+            if food < 2.2 or getattr(perception, "self_solvency", "ok") != "ok":
+                return True
+        if getattr(perception, "pivotal_votes", None) and perception.can_vote:
             return True
         if self.world.tick - last >= PASSIVE_THINK_INTERVAL:
             return True
@@ -460,6 +473,14 @@ class Engine:
             succession_candidates=governance.succession_candidates(self.agents, self.world),
             impeach_justified=governance.impeach_justified(self.world, leader),
             leader_solvency=getattr(leader, "solvency", "ok") if leader else None,
+            network=networks.of(self._network, agent.agent_id),
+            network_town={
+                "density": (self._network or {}).get("density", 0),
+                "brokers": (self._network or {}).get("brokers") or [],
+                "components": (self._network or {}).get("components", 0),
+            },
+            open_auctions=economy.auctions_public(),
+            pivotal_votes=governance.pivotal_ids(agent.agent_id, self.world, self.agents),
         )
 
     def _welcome_replacements(self) -> None:
@@ -480,8 +501,10 @@ class Engine:
         is_faith_lead = bool(faith_lead and faith_lead.agent_id == agent.agent_id)
         rite_open = any(p.get("rule_type") in ("festival", "water_blessing") for p in open_props)
         deadlock = any(prop.get("deadlock") for prop in open_props)
+        broker = bool(((self._network or {}).get("nodes") or {}).get(agent.agent_id, {}).get("broker"))
         if not (sponsor or is_lead or (is_faith_lead and rite_open)
-                or (agent.official_track_record and (deadlock or self.world.active_crises))):
+                or (agent.official_track_record and (deadlock or self.world.active_crises))
+                or (broker and deadlock)):
             return []
         targets = []
         for prop in open_props:

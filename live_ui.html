@@ -89,6 +89,8 @@
       </div>
       <div id="voteFloat" class="float" style="display:none"></div>
       <div id="inventFloat" class="float" style="display:none"></div>
+      <div id="auctionFloat" class="float" style="display:none"></div>
+      <div id="nameFloat" class="float" style="display:none"></div>
 
       <div id="hudLeft">
         <section id="eventFeed" class="glass hudcard">
@@ -655,7 +657,7 @@ function layoutCluster(n, pad) {
   return out;
 }
 
-function drawAgentToken(id, cx, cy, factionId, factionLabel, showName) {
+function drawAgentToken(id, cx, cy, factionId, factionLabel, showName, selected) {
   const color = agentColor(id);
   const isLLM = LLM_IDS.includes(id);
   const grp = svgEl('g', { transform: 'translate(' + cx + ',' + cy + ')', class: 'hit' });
@@ -666,15 +668,18 @@ function drawAgentToken(id, cx, cy, factionId, factionLabel, showName) {
   const expelled = latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].expelled;
   const broke = latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].solvency === 'bankrupt';
   const muted = expelled || broke || (latestFrame && latestFrame.agents && latestFrame.agents[id] && latestFrame.agents[id].can_vote === false);
+  if (selected) {
+    grp.appendChild(svgEl('circle', { cx: 0, cy: -1, r: 13.5, fill: 'none', stroke: '#f4e7c3', 'stroke-width': 1.8 }));
+  }
   grp.appendChild(svgEl('circle', {
     cx: 0, cy: -1, r: 7.5, fill: color,
     stroke: expelled ? '#ef5b5b' : (isLLM ? '#c4a35a' : FAITH_COLOR[faithOf(id, latestFrame)] || '#2a3128'),
     'stroke-width': 2,
     opacity: muted ? 0.5 : 1
   }));
-  if (showName !== false) {
-    const label = svgEl('text', { x: 0, y: 20, 'text-anchor': 'middle', 'font-size': 9, fill: '#243028' });
-    label.textContent = nameOf(id).split(' ')[0];
+  if (selected || showName !== false) {
+    const label = svgEl('text', { x: 0, y: selected ? 24 : 20, 'text-anchor': 'middle', 'font-size': selected ? 11 : 9, fill: '#243028', 'font-weight': selected ? 700 : 400 });
+    label.textContent = selected ? nameOf(id) : nameOf(id).split(' ')[0];
     grp.appendChild(label);
   }
   const title = svgEl('title', {});
@@ -705,23 +710,19 @@ function updateTown(frame) {
   const byLoc = {};
   Object.keys(VISUAL).forEach(k => byLoc[k] = []);
   Object.entries(frame.agents).forEach(([id, st]) => { (byLoc[st.location] = byLoc[st.location] || []).push(id); });
-  if (mapLayers.residents) {
-    Object.entries(byLoc).forEach(([key, list]) => {
-      const spots = layoutCluster(list.length, padOf(key));
-      list.forEach((id, i) => {
-        const factionId = (frame.factions || {})[id];
-        pos[id] = spots[i];
-        const token = drawAgentToken(id, spots[i].x, spots[i].y, factionId, factionId ? factionName(factionId, frame) : null, list.length < 3);
-        token.addEventListener('click', () => selectAgent(id));
-        g.appendChild(token);
-      });
+  const showPeople = mapLayers.residents || mapView === 'social';
+  Object.entries(byLoc).forEach(([key, list]) => {
+    const spots = layoutCluster(list.length, padOf(key));
+    list.forEach((id, i) => {
+      pos[id] = spots[i];
+      if (!showPeople) return;
+      const factionId = (frame.factions || {})[id];
+      const showName = mapView === 'social' || list.length < 3 || id === selectedId;
+      const token = drawAgentToken(id, spots[i].x, spots[i].y, factionId, factionId ? factionName(factionId, frame) : null, showName, id === selectedId);
+      token.addEventListener('click', () => selectAgent(id));
+      g.appendChild(token);
     });
-  } else {
-    Object.entries(byLoc).forEach(([key, list]) => {
-      const spots = layoutCluster(list.length, padOf(key));
-      list.forEach((id, i) => { pos[id] = spots[i]; });
-    });
-  }
+  });
   const showRel = mapLayers.relationships || mapView === 'social';
   if (showRel) {
     (frame.relationship_edges || []).forEach(([a, b, w]) => {
@@ -810,11 +811,47 @@ function placeFloats(frame, pos) {
     inf.innerHTML = '<div class="tiny" style="color:#4da3ff">NEW INVENTION</div><b>' +
       escapeHtml(newest.name || newest.kind) + '</b><div class="tiny">' + nameOf(newest.inventor) + '</div>';
   } else inf.style.display = 'none';
+
+  const lots = ((frame.economy || {}).auctions) || [];
+  const af = document.getElementById('auctionFloat');
+  if (af) {
+    if (lots.length) {
+      const lot = lots[0];
+      const n = Object.keys(lot.bids || {}).length;
+      const left = Math.max(0, (lot.closes_at || 0) - frame.tick);
+      const market = locOf('market');
+      const pt = toScreen(market.x + 70, market.y - 50);
+      af.style.display = 'block';
+      af.style.left = pt.left + 'px';
+      af.style.top = pt.top + 'px';
+      af.innerHTML = '<div class="tiny">SEALED BID</div><b>' +
+        escapeHtml(String(lot.kind || 'lot').replace(/_/g, ' ')) + '</b>' +
+        '<div class="tiny">' + n + ' bid' + (n === 1 ? '' : 's') + ' · ' + left + ' ticks left</div>';
+    } else {
+      af.style.display = 'none';
+      af.innerHTML = '';
+    }
+  }
+
+  const nf = document.getElementById('nameFloat');
+  if (nf) {
+    if (selectedId && pos[selectedId] && frame.agents && frame.agents[selectedId]) {
+      const pt = toScreen(pos[selectedId].x + 22, pos[selectedId].y - 36);
+      nf.style.display = 'block';
+      nf.style.left = pt.left + 'px';
+      nf.style.top = pt.top + 'px';
+      nf.innerHTML = '<div class="tiny">RESIDENT</div><b>' + escapeHtml(nameOf(selectedId)) + '</b>';
+    } else {
+      nf.style.display = 'none';
+      nf.innerHTML = '';
+    }
+  }
 }
 
 function selectAgent(id) {
   selectedId = id;
   if (latestFrame) {
+    updateTown(latestFrame);
     updateInspector(id, latestFrame);
     renderForensicsLab(latestFrame);
   }
@@ -911,6 +948,7 @@ function renderExtra(id, frame) {
       field('Civic vote', escapeHtml(civic), 'Hall sanctions take this. Bankruptcy does not.') +
       field('Economy vote', escapeHtml(econ), 'Same seat as the civic ballot. Broke is not exile.') +
       field('Solvency', escapeHtml(sol), 'Ledger standing, not franchise') +
+      field('Network', networkLine(id, frame), 'Degree is friends. Betweenness is how often a shortest path goes through them. A broker sits between factions.') +
       '<div class="legend">Role is the strongest trait. Livelihood is how crises choose a victim. Bankruptcy does not take either ballot.</div>';
   } else if (extraTab === 'rel') {
     const edges = (frame.relationship_edges || []).filter(e => e[0] === id || e[1] === id);
@@ -1072,6 +1110,7 @@ function renderPeople(frame) {
       (fid ? ' · faction ' + escapeHtml(factionName(fid, frame)) : '') +
       (id === frame.town_leader_id ? ' · town leader' : '') +
       (isFaithLeader(id, frame) ? ' · faith leader' : '') +
+      (((frame.network || {}).nodes || {})[id] && ((frame.network || {}).nodes || {})[id].broker ? ' · broker' : '') +
       (frame.agents[id].expelled ? ' · expelled' : (frame.agents[id].can_vote === false ? ' · vote suspended' : '')) +
       ' · at ' + escapeHtml(String(frame.agents[id].location || '').replace('_', ' ')) + '</div></div></div>';
   }).join('');
@@ -1083,12 +1122,42 @@ function renderPeople(frame) {
 function renderRelationships(frame) {
   const el = document.getElementById('relBody');
   if (!el) return;
-  const edges = (frame.relationship_edges || []).slice().sort((a, b) => Math.abs(b[2]) - Math.abs(a[2]));
-  if (!edges.length) { el.innerHTML = 'no strong ties yet'; return; }
-  el.innerHTML = edges.map(([a, b, w]) =>
-    '<div class="lab-row"><b>' + escapeHtml(nameOf(a)) + ' · ' + escapeHtml(nameOf(b)) + '</b>' +
-    (w >= 0 ? 'ally ' : 'rival ') + Number(w).toFixed(2) + '</div>'
+  const net = frame.network || {};
+  const nodes = net.nodes || {};
+  const ranked = Object.keys(frame.agents || {}).map(id => ({
+    id, ...(nodes[id] || { degree: 0, betweenness: 0, clustering: 0, broker: false })
+  })).sort((a, b) => (b.betweenness - a.betweenness) || (b.degree - a.degree));
+  let html = '<div class="lab-row"><b>Graph</b>density ' + (net.density != null ? net.density : '—') +
+    ' · ' + (net.ties || 0) + ' ties · ' + (net.components || 0) + ' components</div>';
+  if ((net.brokers || []).length) {
+    html += '<div class="lab-row"><b>Brokers</b>' +
+      net.brokers.map(b => escapeHtml(b.name || nameOf(b.id))).join(', ') +
+      ' — they sit between factions</div>';
+  }
+  html += '<div class="tiny" style="margin:8px 0 4px">BETWEENNESS</div>';
+  html += ranked.slice(0, 8).map(row =>
+    '<div class="lab-row" data-id="' + escapeHtml(row.id) + '" style="cursor:pointer"><b>' +
+    escapeHtml(nameOf(row.id)) + (row.broker ? ' · broker' : '') + '</b>' +
+    'degree ' + row.degree + ' · betweenness ' + Number(row.betweenness || 0).toFixed(3) +
+    ' · clustering ' + Number(row.clustering || 0).toFixed(2) + '</div>'
   ).join('');
+  const edges = (frame.relationship_edges || []).slice().sort((a, b) => Math.abs(b[2]) - Math.abs(a[2]));
+  html += '<div class="tiny" style="margin:8px 0 4px">TIES</div>';
+  html += edges.length ? edges.slice(0, 16).map(([a, b, w]) =>
+    '<div class="lab-row" data-id="' + escapeHtml(a) + '" style="cursor:pointer"><b>' +
+    escapeHtml(nameOf(a)) + ' · ' + escapeHtml(nameOf(b)) + '</b>' +
+    (w >= 0 ? 'ally ' : 'rival ') + Number(w).toFixed(2) + '</div>'
+  ).join('') : '<div class="tiny">no strong ties yet</div>';
+  el.innerHTML = html;
+  el.querySelectorAll('[data-id]').forEach(node => {
+    node.addEventListener('click', () => selectAgent(node.dataset.id));
+  });
+}
+
+function networkLine(id, frame) {
+  const row = ((frame.network || {}).nodes || {})[id] || {};
+  return (row.degree != null ? row.degree : 0) + ' ties · bet ' +
+    Number(row.betweenness || 0).toFixed(3) + (row.broker ? ' · broker' : '');
 }
 
 function renderPolitics(frame) {

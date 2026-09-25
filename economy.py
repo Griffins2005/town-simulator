@@ -42,6 +42,13 @@ _offer_ids = itertools.count(1)
 # concern -- World stays focused on places/clock/rules (see world.py's
 # docstring). engine.py never touches this dict directly.
 _pending_offers: dict[int, dict] = {}
+_auction_ids = itertools.count(1)
+_auctions: dict[int, dict] = {}
+_trade_pairs: list[list] = []
+BARGAIN_ROUNDS_MAX = 2
+AUCTION_WINDOW = 4
+FOOD_LOT_QTY = 1.5
+PUBLIC_WORK_CAP = 8.0
 
 # How much of a location's resource pool one `work` action extracts.
 # Named constant, not a magic number, so the "how scarce is scarcity"
@@ -324,6 +331,7 @@ def create_offer(actor: Agent, target: Agent, args: dict):
         "to": target.agent_id,
         "give": give,
         "want": want,
+        "rounds": 0,
     }
     target.memory.add(MemoryEntry(0, "received_trade_offer", actor.agent_id,
                                    {"offer_id": offer_id, "give": give, "want": want}))
@@ -408,8 +416,180 @@ def resolve_offer(actor: Agent, offer_id, accept: bool, world: World, agents: di
         other_id = actor.agent_id if a is proposer else proposer.agent_id
         a.memory.add(MemoryEntry(world.tick, "trade_completed", other_id,
                                   {"offer_id": offer_id, "give": give, "want": want}))
+    pair = sorted((proposer.agent_id, actor.agent_id))
+    _trade_pairs.append(pair)
+    del _trade_pairs[:-24]
     world.log_event("trade_completed", offer_id=offer_id, from_=proposer.agent_id, to=actor.agent_id)
     return ActionResult(True, "trade completed")
+
+
+def counter_offer(actor: Agent, args: dict, world: World, agents: dict):
+    """Nash-style bargain: revise the money side, then the other party must answer.
+
+    First vote analog: at most BARGAIN_ROUNDS_MAX counters. The Decider
+    names a price; this function will not mint goods.
+    """
+    from actions import ActionResult
+
+    offer_id = args.get("offer_id")
+    offer = _pending_offers.get(offer_id)
+    if offer is None:
+        return ActionResult(False, f"no pending offer '{offer_id}'")
+    if offer["to"] != actor.agent_id:
+        return ActionResult(False, "offer not addressed to this agent")
+    if int(offer.get("rounds") or 0) >= BARGAIN_ROUNDS_MAX:
+        return ActionResult(False, "bargain exhausted — accept or reject")
+
+    give = dict(offer["give"])
+    want = dict(offer["want"])
+    revision = args.get("want") or args.get("give") or {}
+    if "money" in want and "money" in revision:
+        money = float(revision["money"])
+        if money <= 0:
+            return ActionResult(False, "counter must name a positive price")
+        want["money"] = round(money, 2)
+    elif "money" in give and "money" in revision:
+        money = float(revision["money"])
+        if money <= 0:
+            return ActionResult(False, "counter must name a positive price")
+        give["money"] = round(money, 2)
+    else:
+        return ActionResult(False, "counter only revises the money side")
+
+    other_id = offer["from"]
+    other = agents.get(other_id)
+    if other is None:
+        return ActionResult(False, "proposing agent no longer exists")
+
+    offer["give"], offer["want"] = want, give
+    offer["from"] = actor.agent_id
+    offer["to"] = other_id
+    offer["rounds"] = int(offer.get("rounds") or 0) + 1
+    other.memory.add(MemoryEntry(world.tick, "received_counter", actor.agent_id,
+                                 {"offer_id": offer_id, "give": offer["give"], "want": offer["want"],
+                                  "rounds": offer["rounds"]}))
+    world.log_event("bargain_countered", offer_id=offer_id, by=actor.agent_id, to=other_id,
+                    rounds=offer["rounds"])
+    return ActionResult(True, f"counter on offer {offer_id}")
+
+
+def auctions_public() -> list:
+    return [dict(row) for row in _auctions.values()]
+
+
+def trade_pairs() -> list:
+    return list(_trade_pairs)
+
+
+def place_bid(actor: Agent, args: dict, world: World):
+    """Sealed bid. First bid sticks. Must be at the market, must hold the coins."""
+    from actions import ActionResult
+
+    auction_id = args.get("auction_id")
+    auction = _auctions.get(auction_id)
+    if auction is None:
+        return ActionResult(False, f"no open auction '{auction_id}'")
+    if world.tick > auction["closes_at"]:
+        return ActionResult(False, "bidding window has closed")
+    if actor.location != "market":
+        return ActionResult(False, "bidding is in person at the market")
+    if actor.agent_id in auction["bids"]:
+        return ActionResult(False, "bid already sealed")
+    try:
+        amount = round(float(args.get("amount")), 2)
+    except (TypeError, ValueError):
+        return ActionResult(False, "bid must be a number")
+    if amount <= 0:
+        return ActionResult(False, "bid must be positive")
+    if auction["kind"] == "food_lot" and actor.money < amount:
+        return ActionResult(False, "cannot bid money you do not hold")
+    if auction["kind"] == "public_work" and amount > PUBLIC_WORK_CAP:
+        return ActionResult(False, "public work bid exceeds the cap")
+    auction["bids"][actor.agent_id] = amount
+    actor.memory.add(MemoryEntry(world.tick, "placed_bid", None,
+                                 {"auction_id": auction_id, "kind": auction["kind"], "amount": amount}))
+    world.log_event("bid_placed", auction_id=auction_id, by=actor.agent_id, amount=amount,
+                    lot_kind=auction["kind"])
+    return ActionResult(True, "bid sealed")
+
+
+def tick_auctions(world: World, agents: dict, rng) -> None:
+    """Close expired lots, then maybe open one. Clock, not a Decider."""
+    closed = [aid for aid, row in _auctions.items() if world.tick >= row["closes_at"]]
+    for aid in closed:
+        _award_auction(_auctions.pop(aid), world, agents)
+    if _auctions:
+        return
+    farm = world.locations.get("farm")
+    food = (farm.resources.get("food", 0.0) if farm else 0.0)
+    if world.tick % 10 == 0 and food >= FOOD_LOT_QTY + 4:
+        _open_auction(world, "food_lot", {"food": FOOD_LOT_QTY})
+    elif world.tick % 10 == 5 and world.treasury >= 4:
+        _open_auction(world, "public_work", {"pay_cap": PUBLIC_WORK_CAP})
+
+
+def _open_auction(world: World, kind: str, lot: dict) -> None:
+    auction_id = next(_auction_ids)
+    _auctions[auction_id] = {
+        "auction_id": auction_id,
+        "kind": kind,
+        "lot": lot,
+        "opens_at": world.tick,
+        "closes_at": world.tick + AUCTION_WINDOW,
+        "bids": {},
+    }
+    world.log_event("auction_opened", auction_id=auction_id, lot_kind=kind)
+    world.notice_board.append({
+        "tick": world.tick, "from": "market", "about": None,
+        "text": ("food lot — sealed second-price bid at the market"
+                 if kind == "food_lot"
+                 else "public work — lowest sealed bid wins, treasury pays"),
+    })
+    del world.notice_board[:-8]
+
+
+def _award_auction(auction: dict, world: World, agents: dict) -> None:
+    bids = auction.get("bids") or {}
+    if not bids:
+        world.log_event("auction_failed", auction_id=auction["auction_id"], reason="no bids")
+        return
+    kind = auction["kind"]
+    if kind == "food_lot":
+        ranked = sorted(bids.items(), key=lambda kv: (-kv[1], kv[0]))
+        winner_id, high = ranked[0]
+        price = ranked[1][1] if len(ranked) > 1 else high
+        winner = agents.get(winner_id)
+        farm = world.locations.get("farm")
+        qty = float((auction.get("lot") or {}).get("food") or 0)
+        if winner is None or farm is None or farm.resources.get("food", 0) < qty:
+            world.log_event("auction_failed", auction_id=auction["auction_id"], reason="no lot left")
+            return
+        if winner.money < price:
+            world.log_event("auction_failed", auction_id=auction["auction_id"], reason="winner cannot pay")
+            return
+        winner.money = round(winner.money - price, 4)
+        world.treasury += price
+        farm.resources["food"] = farm.resources.get("food", 0) - qty
+        winner.inventory["food"] = winner.inventory.get("food", 0) + qty
+        winner.memory.add(MemoryEntry(world.tick, "won_auction", None,
+                                      {"kind": kind, "paid": price, "food": qty}))
+        world.log_event("auction_awarded", auction_id=auction["auction_id"], lot_kind=kind,
+                        winner=winner_id, price=price)
+        return
+    if kind == "public_work":
+        ranked = sorted(bids.items(), key=lambda kv: (kv[1], kv[0]))
+        winner_id, ask = ranked[0]
+        winner = agents.get(winner_id)
+        pay = min(ask, world.treasury, PUBLIC_WORK_CAP)
+        if winner is None or pay <= 0:
+            world.log_event("auction_failed", auction_id=auction["auction_id"], reason="empty treasury")
+            return
+        world.treasury = round(world.treasury - pay, 4)
+        winner.money = round(winner.money + pay, 4)
+        winner.memory.add(MemoryEntry(world.tick, "won_auction", None,
+                                      {"kind": kind, "paid": pay}))
+        world.log_event("auction_awarded", auction_id=auction["auction_id"], lot_kind=kind,
+                        winner=winner_id, price=pay)
 
 
 def _has_sufficient(agent: Agent, items: dict) -> bool:
@@ -448,27 +628,35 @@ def offers_for(agent_id: str) -> list:
 
 
 def reset_offers() -> None:
-    """Clear all pending offers. Exists mainly for test isolation, since
-    `_pending_offers` is module-level state shared across a process --
-    without this, running multiple simulations in one Python process
-    (e.g. in a test suite) would leak offers between runs.
-    """
+    """Clear pending offers, auctions, and the recent trade graph."""
+    global _offer_ids, _auction_ids
     _pending_offers.clear()
+    _auctions.clear()
+    _trade_pairs.clear()
+    _offer_ids = itertools.count(1)
+    _auction_ids = itertools.count(1)
 
 
 def export_state() -> dict:
     used = list(_pending_offers)
+    used_a = list(_auctions)
     return {
         "pending_offers": copy.deepcopy(_pending_offers),
         "next_id": max(used, default=0) + 1,
+        "auctions": copy.deepcopy(_auctions),
+        "next_auction_id": max(used_a, default=0) + 1,
+        "trade_pairs": list(_trade_pairs),
     }
 
 
 def import_state(blob: dict) -> None:
-    global _offer_ids
+    global _offer_ids, _auction_ids
     reset_offers()
     _pending_offers.update(copy.deepcopy(blob.get("pending_offers") or {}))
+    _auctions.update(copy.deepcopy(blob.get("auctions") or {}))
+    _trade_pairs.extend(blob.get("trade_pairs") or [])
     _offer_ids = itertools.count(int(blob.get("next_id") or 1))
+    _auction_ids = itertools.count(int(blob.get("next_auction_id") or 1))
 
 
 def apply_crisis_pressure(world: World, agents: dict[str, Agent], rng) -> None:
@@ -578,4 +766,6 @@ def snapshot(world: World, agents: dict[str, Agent]) -> dict:
         "solvency": by_solvency,
         "ruined": ruined,
         "economic_rules": list(ECONOMIC_RULES),
+        "auctions": auctions_public(),
+        "trade_pairs": list(_trade_pairs),
     }

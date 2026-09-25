@@ -260,6 +260,7 @@ class Recorder:
             "geography": geography.snapshot(world),
             "faith": faith.snapshot(world, self.engine.agents),
             "economy": economy.snapshot(world, self.engine.agents),
+            "network": getattr(self.engine, "_network", None) or {},
         }
 
     def agents_static_snapshot(self) -> dict:

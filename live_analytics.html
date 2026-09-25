@@ -50,16 +50,17 @@
       <p style="color:var(--muted);font-size:13px;margin:0 0 14px">Town-wide reconstruction: inequality, coordination, occupancy, and domain crossings. The living town stays on Observe.</p>
       <div id="vizGrid">
         <div class="panel"><h2>Lorenz curve — wealth inequality</h2><canvas id="lorenzChart"></canvas></div>
-        <div class="panel"><h2>Money vs reputation</h2><canvas id="scatterChart"></canvas></div>
+        <div class="panel"><h2>Money vs reputation</h2><canvas id="scatterChart"></canvas><div id="scatterPick" style="font-size:12px;color:#c5cde0;margin-top:6px;min-height:1.3em"></div></div>
         <div class="panel"><h2>Event mix (this tick)</h2><canvas id="mixChart"></canvas></div>
         <div class="panel"><h2>Gini / entropy / anomaly</h2><canvas id="tsChart"></canvas></div>
-        <div class="panel"><h2>Social graph</h2><svg id="netSvg" viewBox="0 0 300 230" style="width:100%;height:190px"></svg></div>
+        <div class="panel"><h2>Social graph</h2><svg id="netSvg" viewBox="0 0 300 230" style="width:100%;height:190px;cursor:pointer"></svg><div id="netPick" style="font-size:12px;color:#c5cde0;margin-top:6px;min-height:1.3em">click a resident</div></div>
         <div class="panel"><h2>Location occupancy heatmap</h2><svg id="heatSvg" viewBox="0 0 320 280" style="width:100%;height:260px"></svg></div>
         <div class="panel"><h2>Domain crossings</h2><svg id="domainSvg" viewBox="0 0 320 150" style="width:100%;height:160px"></svg></div>
         <div class="panel"><h2>Money by agent</h2><canvas id="moneyChart"></canvas></div>
         <div class="panel"><h2>Faction membership</h2><div id="factionBars" style="font-size:12px;line-height:1.7;color:#c5cde0"></div></div>
         <div class="panel"><h2>Congregations</h2><div id="faithBars" style="font-size:12px;line-height:1.7;color:#c5cde0"></div></div>
         <div class="panel"><h2>Solvency and livelihoods</h2><div id="solvencyBars" style="font-size:12px;line-height:1.7;color:#c5cde0"></div></div>
+        <div class="panel"><h2>Social graph metrics</h2><div id="graphBars" style="font-size:12px;line-height:1.7;color:#c5cde0"></div></div>
       </div>
     </div>
   </div>
@@ -72,6 +73,7 @@ const darkScale = {
   y: { ticks: { color: '#8b93a8', font: { size: 9 } }, grid: { color: '#1d2638' } }
 };
 let moneyChart, lorenzChart, scatterChart, mixChart, tsChart;
+let pickedNetId = null;
 
 function updateMoneyChart(frame) {
   const ids = Object.keys(frame.agents);
@@ -118,7 +120,7 @@ function updateLorenz(lorenz) {
 }
 function updateScatter(frame) {
   const points = Object.entries(frame.agents).map(([id, st]) => ({
-    x: st.money, y: st.reputation,
+    x: st.money, y: st.reputation, id, label: nameOf(id),
     backgroundColor: (frame.factions || {})[id] ? factionColor(frame.factions[id]) : agentColor(id)
   }));
   if (!scatterChart) {
@@ -127,7 +129,25 @@ function updateScatter(frame) {
       data: { datasets: [{ data: points, backgroundColor: points.map(p => p.backgroundColor), pointRadius: 5 }] },
       options: {
         responsive: true,
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label(ctx) {
+                const raw = ctx.raw || {};
+                return (raw.label || '') + ' · $' + Number(raw.x).toFixed(1) +
+                  ' · rep ' + Number(raw.y).toFixed(2);
+              }
+            }
+          }
+        },
+        onClick(_evt, els) {
+          const cap = document.getElementById('scatterPick');
+          if (!cap) return;
+          if (!els.length) { cap.textContent = ''; return; }
+          const raw = scatterChart.data.datasets[0].data[els[0].index] || {};
+          cap.textContent = raw.label || '';
+        },
         scales: {
           x: { title: { display: true, text: 'money', color: '#8b93a8', font: { size: 10 } }, ...darkScale.x },
           y: { min: 0, max: 1, title: { display: true, text: 'reputation', color: '#8b93a8', font: { size: 10 } }, ...darkScale.y }
@@ -206,11 +226,39 @@ function updateNetwork(frame) {
   ids.forEach(id => {
     const p = pos[id];
     const fid = (frame.factions || {})[id];
-    svg.appendChild(svgEl('circle', {
-      cx: p.x, cy: p.y, r: 6, fill: agentColor(id),
+    const picked = id === pickedNetId;
+    const grp = svgEl('g', { style: 'cursor:pointer' });
+    const title = svgEl('title', {});
+    title.textContent = nameOf(id);
+    grp.appendChild(title);
+    if (picked) {
+      grp.appendChild(svgEl('circle', {
+        cx: p.x, cy: p.y, r: 11, fill: 'none', stroke: '#f4e7c3', 'stroke-width': 1.6
+      }));
+    }
+    grp.appendChild(svgEl('circle', {
+      cx: p.x, cy: p.y, r: picked ? 7.5 : 6, fill: agentColor(id),
       stroke: fid ? factionColor(fid) : '#00000055', 'stroke-width': fid ? 2 : 1
     }));
+    if (picked) {
+      const label = svgEl('text', {
+        x: p.x, y: p.y - 14, fill: '#e8eefc', 'font-size': 10,
+        'font-weight': 700, 'text-anchor': 'middle'
+      });
+      label.textContent = nameOf(id);
+      grp.appendChild(label);
+    }
+    grp.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      pickedNetId = id;
+      const cap = document.getElementById('netPick');
+      if (cap) cap.textContent = nameOf(id);
+      updateNetwork(frame);
+    });
+    svg.appendChild(grp);
   });
+  const cap = document.getElementById('netPick');
+  if (cap) cap.textContent = pickedNetId ? nameOf(pickedNetId) : 'click a resident';
 }
 function updateHeatmap() {
   const svg = document.getElementById('heatSvg');
@@ -349,6 +397,30 @@ function renderFrame(frame) {
   updateFactions(frame);
   updateFaith(frame);
   updateSolvency(frame);
+  updateGraphMetrics(frame);
+}
+
+function updateGraphMetrics(frame) {
+  const el = document.getElementById('graphBars');
+  if (!el) return;
+  const net = frame.network || {};
+  const nodes = net.nodes || {};
+  const ranked = Object.keys(nodes).sort((a, b) =>
+    (nodes[b].betweenness || 0) - (nodes[a].betweenness || 0)
+  ).slice(0, 6);
+  const lots = ((frame.economy || {}).auctions) || [];
+  el.innerHTML = '<div>density ' + (net.density != null ? net.density : '—') +
+    ' · ties ' + (net.ties || 0) + ' · components ' + (net.components || 0) + '</div>' +
+    (ranked.length ? ranked.map(id => {
+      const row = nodes[id];
+      return '<div>' + escapeHtml(nameOf(id)) +
+        (row.broker ? ' · broker' : '') +
+        ' · bet ' + Number(row.betweenness || 0).toFixed(3) +
+        ' · deg ' + row.degree + '</div>';
+    }).join('') : '') +
+    (lots.length ? '<div style="margin-top:8px">Open lot: ' +
+      lots.map(l => escapeHtml(String(l.kind || 'lot').replace(/_/g, ' ')) + ' · ' +
+        Object.keys(l.bids || {}).length + ' bids').join('; ') + '</div>' : '');
 }
 bootLab();
 </script>

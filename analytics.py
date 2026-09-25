@@ -34,6 +34,8 @@ DOMAIN_ECONOMIC = (
     "trade_completed", "trade_rejected", "trade_failed_insufficient_funds",
     "work", "corruption_scandal", "market_shock", "crisis_started", "crisis_ended",
     "invention", "invention_adopted", "bankrupt", "going_bankrupt", "recovered",
+    "bid_placed", "auction_opened", "auction_awarded", "auction_failed",
+    "bargain_countered",
 )
 
 
@@ -322,6 +324,8 @@ def compute_metrics(world: World, agents: dict[str, Agent], events: list[dict]) 
         "lorenz": lorenz_points(moneys),
         "domains": domains,
         "crossings": crossings(domains),
+        "bids": kinds.get("bid_placed", 0),
+        "counters": kinds.get("bargain_countered", 0),
     }
 
 

@@ -119,6 +119,7 @@ POLITICAL_KINDS = VOTE_KINDS | {
 }
 ECONOMIC_KINDS = {
     "work", "received_trade_offer", "went_bankrupt", "trade",
+    "received_counter", "placed_bid", "won_auction",
 }
 SOCIAL_KINDS = {
     "gossip", "speak", "worship", "converted", "witnessed_corruption_scandal",

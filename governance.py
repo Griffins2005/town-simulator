@@ -845,6 +845,32 @@ def take_pending_welcomes() -> list[dict]:
     return pending
 
 
+def pivotal_ids(agent_id: str, world: World, agents: dict) -> list:
+    """Proposal ids where this ballot would change pass/fail. Game theory, not flavor."""
+    out = []
+    roll = max(1, len(eligible_voters(agents, world.tick)))
+    for proposal in _open_proposals.values():
+        if agent_id in (proposal.get("votes") or {}):
+            continue
+        actor = agents.get(agent_id)
+        if actor is None or not actor.can_vote_on(world.tick, proposal.get("rule_type")):
+            continue
+        rules = proposal.get("vote_rules") or vote_rules_for(proposal.get("rule_type"), world)
+        yes = sum(1 for v in proposal["votes"].values() if v == "yes")
+        no = sum(1 for v in proposal["votes"].values() if v == "no")
+        quorum = float(rules.get("quorum") or 0.4)
+        pass_at = float(rules.get("pass") or 0.5)
+
+        def would_pass(y: int, tot: int) -> bool:
+            if tot <= 0 or tot / roll < quorum:
+                return False
+            return (y / tot) >= pass_at
+
+        if would_pass(yes + 1, yes + no + 1) != would_pass(yes, yes + no + 1):
+            out.append(proposal["proposal_id"])
+    return out
+
+
 def open_proposals_snapshot(world: World | None = None, agents: dict | None = None) -> list:
     """Read-only list of currently open proposals, for engine.py to embed
     into agents' Perception objects. When world/agents are passed, each

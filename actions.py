@@ -148,6 +148,16 @@ def _trade_reject(actor: Agent, intent: Intent, world: World, agents: dict[str, 
     return economy.resolve_offer(actor, intent.args.get("offer_id"), accept=False, world=world, agents=agents)
 
 
+def _trade_counter(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
+    """Revise the money side of a pending offer. Engine validates the coins."""
+    return economy.counter_offer(actor, intent.args, world, agents)
+
+
+def _bid(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
+    """Seal a bid on an open market lot. First bid sticks."""
+    return economy.place_bid(actor, intent.args, world)
+
+
 def _speak(actor: Agent, intent: Intent, world: World, agents: dict[str, Agent]) -> ActionResult:
     """Handler for the "speak" action. Records a memory of the exchange
     for both `actor` and the target (`intent.args["to"]`), and nudges
@@ -362,6 +372,8 @@ _REGISTRY = {
     "trade_offer": _trade_offer,
     "trade_accept": _trade_accept,
     "trade_reject": _trade_reject,
+    "trade_counter": _trade_counter,
+    "bid": _bid,
     "speak": _speak,
     "gossip": _gossip,
     "propose_rule": _propose_rule,
