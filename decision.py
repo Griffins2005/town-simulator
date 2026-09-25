@@ -131,6 +131,7 @@ class Perception:
     self_faith: str = "unaffiliated"
     self_faith_name: str = "Unaffiliated"
     self_piety: float = 0.2
+    self_wanderlust: float = 0.35
     nearby_faiths: dict[str, str] = field(default_factory=dict)
     proposer_faith: str | None = None
     # Geography the agent can feel this tick: open streets from here,
@@ -201,6 +202,9 @@ class DecisionDraft:
     intent: Intent
     retrieved_memories: list = field(default_factory=list)
     considered_actions: list = field(default_factory=list)
+    source: str = "rule"  # rule | llm | fallback
+    model_intent: dict | None = None
+    fallback_reason: str | None = None
 
 
 class Decider(Protocol):
@@ -388,13 +392,10 @@ class RuleBasedDecider:
         # reasons to stay -> more agents arrive. location_entropy
         # collapsed to ~0.17 by tick 1000 in that run.
         #
-        # WANDERLUST_CHANCE is checked BEFORE social/trade priorities
-        # (not folded into the "else nothing else applies" tail) so it
-        # can interrupt an otherwise-sticky agent. It's deliberately
-        # small and not trait-weighted yet -- this is a blunt fix for a
-        # structural priority-ordering problem, not a personality trait;
-        # Phase 2's LLM agents should make this choice via actual
-        # reasoning about competing needs, not a coin flip at all.
+        # Wanderlust is checked BEFORE social/trade priorities (not
+        # folded into the "else nothing else applies" tail) so it can
+        # interrupt an otherwise-sticky agent. The chance is the
+        # persona's wanderlust trait, cut in half during worship hours.
         home = None
         try:
             from faith import faith_home
@@ -406,8 +407,11 @@ class RuleBasedDecider:
             return take(Intent(action="move", args={"destination": home}),
                         f"piety — gather with the {p.self_faith_name}", 0.58)
 
-        WANDERLUST_CHANCE = 0.06 if getattr(p, "worship_now", False) else 0.12
-        if self.rng.random() < WANDERLUST_CHANCE:
+        wander = float(getattr(p, "self_wanderlust", 0.35) or 0.35)
+        chance = 0.04 + 0.16 * max(0.0, min(1.0, wander))
+        if getattr(p, "worship_now", False):
+            chance *= 0.5
+        if self.rng.random() < chance:
             dest = self._next_stop(p)
             return take(Intent(action="move", args={"destination": dest}),
                         "wander the next street", 0.55)
@@ -863,7 +867,8 @@ class RuleBasedDecider:
             crises = p.active_crises or set()
             ruined = getattr(p, "self_solvency", "ok") in ("strained", "bankrupt")
             farmer = getattr(p, "self_livelihood", "") == "farmer"
-            if ("flood" in crises or "famine" in crises or (ruined and farmer)) and self.rng.random() < (0.48 if lead else 0.32):
+            if ("flood" in crises or "famine" in crises or "drought" in crises
+                    or (ruined and farmer)) and self.rng.random() < (0.48 if lead else 0.32):
                 return take(Intent(action="propose_rule", args={
                     "rule_type": "water_blessing", "rule_args": {},
                 }), "propose a water blessing for the fields", 0.78 if lead else 0.74)

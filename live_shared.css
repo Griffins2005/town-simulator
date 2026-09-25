@@ -310,23 +310,67 @@ body.observe .float {
 #crisisBanner.famine { border-color: #c4a35a; color: #e8d5a0; }
 #crisisBanner.unrest { border-color: #ef5b5b; color: #ffc4c4; }
 #crisisBanner.bank_run { border-color: #e8c36a; color: #f0e0a8; }
+#crisisBanner.drought { border-color: #c4a35a; color: #e8d5a0; }
+#crisisBanner.pollution { border-color: #8a7a6a; color: #d4c8b8; }
+#viewBanner {
+  display: none; position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  z-index: 7; padding: 7px 12px; font-size: 12px; color: var(--gold);
+}
+#viewBanner.on { display: block; }
+body.is-paused #status { color: var(--gold); }
 
 .lab-panel {
-  display: none; position: absolute; z-index: 5; padding: 12px 14px; overflow: auto;
+  display: none; position: absolute; z-index: 8; padding: 12px 14px 16px; overflow: auto;
 }
 .lab-panel.open { display: block; }
 #labPeople, #labRelationships, #labPolitics, #labExperiments {
   left: 14px; top: 58px; bottom: 14px; width: min(360px, 32vw);
 }
+#labExperiments { width: min(420px, 38vw); }
 #labForensics {
   right: 14px; top: 14px; bottom: 14px; width: min(380px, 34vw);
 }
 body[data-lab="people"] #peopleDrawer { display: none; }
 body[data-lab="forensics"] #hudRight { display: none; }
 body[data-lab="politics"] #proposalCard { display: none; }
-body[data-lab="experiments"] #hudLeft { opacity: 0.35; pointer-events: none; }
+body[data-lab="experiments"] #hudLeft { display: none; }
+.lab-lead { font-size: 12px; color: var(--muted); line-height: 1.45; margin: 0 0 8px; }
+.lab-meta { font-size: 11px; color: var(--muted); margin: 0 0 10px; }
+.panel-sub {
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); margin: 12px 0 4px; font-weight: 700;
+}
+.lab-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 4px; }
+.lab-toolbar button { font-size: 11px; }
+.fork-form {
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid #2a3348;
+}
+.fork-head { font-size: 12px; margin-bottom: 8px; }
+.fork-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;
+}
+.fork-grid label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.fork-grid select {
+  background: #0e1522; color: var(--ink); border: 1px solid #2a3348;
+  border-radius: 4px; padding: 5px 6px; font: inherit; font-size: 12px;
+  text-transform: none; letter-spacing: 0;
+}
+.compare-box { margin-top: 12px; }
+.compare-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.compare-table th, .compare-table td {
+  text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.compare-table thead th { color: var(--muted); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.compare-table tbody th { color: var(--muted); font-weight: 600; width: 28%; }
+.compare-table tr.diff td { color: var(--gold); }
 .lab-row { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
 .lab-row b { display: block; }
+.lab-row.is-on { background: #16343a; margin: 0 -8px; padding: 7px 8px; }
+.lab-row .lab-actions { display: flex; gap: 6px; margin-top: 4px; }
 .lab-search {
   width: 100%; margin: 0 0 8px; padding: 6px 8px;
   background: #0e1522; border: 1px solid #2a3348; border-radius: 4px;

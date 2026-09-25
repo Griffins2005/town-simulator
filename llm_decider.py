@@ -80,7 +80,13 @@ BUILD_VERSION = "2026-07-05-v7-repeal-spec-sync"
 # before assuming a new model works -- verify against the live API, the
 # same way this correction was made, rather than from a general feature
 # description alone.
-MODEL = "openai/gpt-oss-120b"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
+CHEAP_MODEL = "llama-3.1-8b-instant"
+MODEL = os.environ.get("TOWNSIM_LLM_MODEL") or os.environ.get("GROQ_MODEL") or DEFAULT_MODEL
+
+
+def resolve_model(name: str | None = None) -> str:
+    return (name or os.environ.get("TOWNSIM_LLM_MODEL") or os.environ.get("GROQ_MODEL") or DEFAULT_MODEL).strip()
 
 
 # JSON Schema for Intent, used with Groq's structured-output mode (see
@@ -197,7 +203,7 @@ greenways — then those places drop off your reachable list.
 Religion is a civic institution, not doctrine you invent. You cannot author \
 beliefs, rites, or scripture. Worship, convert, festival, and water_blessing \
 are the only faith actions; the engine validates them. \
-If the town is in a crisis (famine, unrest, bank_run, flood), you MUST act: move to the \
+If the town is in a crisis (famine, unrest, bank_run, flood, drought, pollution), you MUST act: move to the \
 farm and work, go to town_hall or the park and propose or vote, leave flooded \
 ground, invent a catalog tool, speak or gossip to organize neighbors. Fight \
 for the town the way a frightened person would. \
@@ -339,7 +345,7 @@ class LLMDecider:
     _shared_limiter = None
 
     def __init__(self, api_key=None, rpm=RECOMMENDED_RPM_SAFETY_MARGIN, verbose=True,
-                 use_strict_schema=False):
+                 use_strict_schema=False, model=None):
         """
         Args:
             api_key: Groq API key. If omitted, read from the
@@ -396,6 +402,7 @@ class LLMDecider:
         from groq import Groq
         self.client = Groq(api_key=api_key)
         self.verbose = verbose
+        self.model = resolve_model(model)
 
         if LLMDecider._shared_limiter is None:
             LLMDecider._shared_limiter = TokenBucketRateLimiter(max_per_minute=rpm)
@@ -417,6 +424,9 @@ class LLMDecider:
         # docstring above for why this is the new default).
         self._use_json_object_fallback = not use_strict_schema
         self._rules = None
+        self._last_source = "llm"
+        self._last_model_intent = None
+        self._last_fallback_reason = None
 
     def _rule_fallback(self, agent_id, perception, why: str):
         """When the model idles or fails, still act like a resident."""
@@ -425,26 +435,44 @@ class LLMDecider:
             self._rules = RuleBasedDecider()
         if self.verbose:
             print(f"  [llm fallback] {agent_id}: {why} — rule-based action instead")
+        self._last_source = "fallback"
+        self._last_fallback_reason = why
         return self._rules.decide(agent_id, perception)
 
     def _after_llm(self, agent_id, perception, intent):
+        from decision_record import intent_as_dict
+        self._last_model_intent = intent_as_dict(intent)
         if intent.action != "idle":
+            self._last_source = "llm"
+            self._last_fallback_reason = None
             return intent
         return self._rule_fallback(agent_id, perception, "model returned idle")
 
     def deliberate(self, agent_id, perception):
         """Same as decide(), plus a forensic draft for the six-stage record."""
         from decision import DecisionDraft
+        self._last_source = "llm"
+        self._last_model_intent = None
+        self._last_fallback_reason = None
         intent = self.decide(agent_id, perception)
         considered = [{
             "action": intent.action,
-            "reason": intent.say or "llm choice",
+            "reason": intent.say or self._last_fallback_reason or "llm choice",
             "weight": 1.0,
         }]
+        if self._last_model_intent and self._last_source == "fallback":
+            considered.insert(0, {
+                "action": (self._last_model_intent or {}).get("action") or "idle",
+                "reason": "model proposed — engine used the rule fallback",
+                "weight": 0.4,
+            })
         return DecisionDraft(
             intent=intent,
             retrieved_memories=list(perception.recent_memories),
             considered_actions=considered,
+            source=self._last_source,
+            model_intent=self._last_model_intent,
+            fallback_reason=self._last_fallback_reason,
         )
 
     def decide(self, agent_id, perception):
@@ -468,35 +496,17 @@ class LLMDecider:
             else self._json_schema_format()
 
         try:
+            extra = {"reasoning_effort": "low"} if "gpt-oss" in self.model else {}
             response = self.client.chat.completions.create(
-                model=MODEL,
+                model=self.model,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": _build_user_prompt(perception)},
                 ],
                 response_format=response_format,
                 temperature=0.7,
-                # openai/gpt-oss-120b is a reasoning model that, by
-                # default, spends tokens on hidden chain-of-thought
-                # (Groq's docs: included in the response's `reasoning`
-                # field, controllable via reasoning_effort) BEFORE
-                # producing the final JSON. Under a fixed token budget,
-                # that hidden reasoning competes with the actual answer
-                # for the remaining tokens -- a real, plausible
-                # contributor to the empty/truncated completions seen in
-                # live runs. 'low' minimizes that overhead; this
-                # decision doesn't need deep multi-step reasoning, just
-                # a same-tick choice from a fixed action menu.
-                reasoning_effort="low",
-                # Raised from an initial 300 after a real run's flat,
-                # nullable-field-heavy schema (16 fields + reasoning,
-                # most of them "null" for any given action) combined
-                # with a token-budget-limited generation to plausibly
-                # produce truncated, validation-failing JSON -- see the
-                # json_validate_failed handling below for the broader
-                # context. More headroom costs a little latency but
-                # removes one concrete way to truncate mid-object.
                 max_completion_tokens=500,
+                **extra,
             )
             raw = response.choices[0].message.content
             return self._after_llm(agent_id, perception, self._parse_intent(agent_id, raw))
@@ -549,16 +559,17 @@ class LLMDecider:
                     print(f"  [llm retry] {agent_id}: strict mode validation failed "
                           f"-- retrying this call in json_object mode")
                 try:
+                    extra = {"reasoning_effort": "low"} if "gpt-oss" in self.model else {}
                     retry_response = self.client.chat.completions.create(
-                        model=MODEL,
+                        model=self.model,
                         messages=[
                             {"role": "system", "content": _SYSTEM_PROMPT},
                             {"role": "user", "content": _build_user_prompt(perception)},
                         ],
                         response_format=self._json_object_format(),
                         temperature=0.7,
-                        reasoning_effort="low",
                         max_completion_tokens=500,
+                        **extra,
                     )
                     raw = retry_response.choices[0].message.content
                     return self._after_llm(agent_id, perception, self._parse_intent(agent_id, raw))

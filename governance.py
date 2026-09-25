@@ -230,6 +230,8 @@ def vote_rules_for(rule_type: str, world: World) -> dict:
     )
     if "flood" in (world.active_crises or set()) and rule_type == "water_blessing":
         emergency = True
+    if "drought" in (world.active_crises or set()) and rule_type == "water_blessing":
+        emergency = True
     if "unrest" in (world.active_crises or set()) and rule_type == "impeach":
         emergency = True
     if emergency:
@@ -387,10 +389,9 @@ def propose(actor: Agent, args: dict, world: World):
 
 
 def cast_vote(actor: Agent, proposal_id, choice: str, world: World):
-    """Execute a `vote` action: record `actor`'s vote on an open
-    proposal. A repeat vote from the same agent silently overwrites
-    their prior choice (see README's "known limitations" for why this
-    is currently harmless in practice).
+    """Execute a `vote` action: record `actor`'s first vote on an open
+    proposal. A second ballot from the same agent is refused — lobby
+    is the path that can still flip a neighbor.
 
     Args:
         actor: the agent casting the vote.
@@ -401,8 +402,8 @@ def cast_vote(actor: Agent, proposal_id, choice: str, world: World):
 
     Returns:
         actions.ActionResult: success, or failure if the proposal
-        doesn't exist, its voting window has closed, or `choice` is
-        neither "yes" nor "no".
+        doesn't exist, its voting window has closed, `choice` is
+        neither "yes" nor "no", or this agent already voted.
     """
     from actions import ActionResult
 
@@ -415,6 +416,8 @@ def cast_vote(actor: Agent, proposal_id, choice: str, world: World):
         return ActionResult(False, f"invalid vote choice '{choice}'")
     if not actor.can_vote_on(world.tick, proposal.get("rule_type")):
         return ActionResult(False, "no ballot on this vote")
+    if actor.agent_id in proposal["votes"]:
+        return ActionResult(False, "ballot already cast")
 
     proposal["votes"][actor.agent_id] = choice
     world.log_event("vote_cast", proposal_id=proposal_id, by=actor.agent_id, choice=choice)

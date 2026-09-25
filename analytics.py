@@ -28,6 +28,7 @@ DOMAIN_POLITICAL = (
     "member_expelled", "member_arrived", "member_welcomed", "member_restored", "vote_suspended",
     "vote_rights_restored", "proposal_deadlocked", "festival_ended", "faith_leader",
     "leader_seated", "leader_elected", "leader_impeached", "leader_stepped_down",
+    "llm_fallback",
 )
 DOMAIN_ECONOMIC = (
     "trade_completed", "trade_rejected", "trade_failed_insufficient_funds",
@@ -261,6 +262,16 @@ def build_public_headlines(world: World, agents: dict[str, Agent], limit: int = 
             item = {
                 "about": who,
                 "text": f"{event.get('name') or names.get(who, who)} stepped down ({event.get('reason')})",
+            }
+        elif kind == "llm_fallback":
+            who = event.get("agent")
+            item = {
+                "about": who,
+                "text": (
+                    f"{names.get(who, who)}: model proposed "
+                    f"{event.get('model_proposed') or 'nothing'}, engine used "
+                    f"{event.get('engine_action')} ({event.get('reason')})"
+                ),
             }
         elif kind == "proposal_deadlocked":
             item = {

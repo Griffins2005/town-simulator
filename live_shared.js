@@ -83,24 +83,63 @@ function faithLeaderName(faithId, frame) {
   const row = faithLeaders(frame).find(r => r.faith === faithId);
   return row ? (row.name || nameOf(row.id)) : '';
 }
-function classifyMemory(text) {
-  const t = String(text || '').toLowerCase();
+const VOTE_MEMORY = {
+  cast_vote: 1, proposal_resolved: 1, was_lobbied: 1, was_impeached: 1,
+  was_elected: 1, vote_suspended: 1
+};
+function memoryKind(entry) {
+  if (entry && typeof entry === 'object') return entry.kind || '';
+  const m = String(entry || '').match(/\[t\d+\]\s+([a-z_]+)/i);
+  return m ? m[1] : '';
+}
+function memoryText(entry) {
+  if (entry && typeof entry === 'object') return entry.text || entry.kind || '';
+  return String(entry || '');
+}
+function memoryTick(entry) {
+  if (entry && typeof entry === 'object' && entry.tick != null) return entry.tick;
+  const m = String(memoryText(entry)).match(/\[t(\d+)\]/);
+  return m ? Number(m[1]) : null;
+}
+function memorySubject(entry) {
+  if (entry && typeof entry === 'object') return entry.subject || null;
+  const m = String(memoryText(entry)).match(/about\s+(agent_\d+)/);
+  return m ? m[1] : null;
+}
+function classifyMemory(entry) {
+  const kind = memoryKind(entry);
+  const domain = entry && typeof entry === 'object' ? entry.domain : '';
+  if (domain === 'votes' || VOTE_MEMORY[kind]) return 'votes';
+  if (domain) return domain;
+  if (kind) {
+    if (/invent|adopt/.test(kind)) return 'inventions';
+    if (/vote|proposal|lobby|expel|welcome|impeach|elect|rule/.test(kind)) return 'political';
+    if (/work|trade|bankrupt|crisis/.test(kind)) return 'economic';
+    return 'social';
+  }
+  const t = memoryText(entry).toLowerCase();
   if (/invent|pump|adopt|workshop|catalog/.test(t)) return 'inventions';
   if (/vote|proposal|lobby|faction|curfew|repeal|expel|suspend|rule_|welcome|deadlock/.test(t)) return 'political';
   if (/unrest|protest|road_closed|bridge|greenway/.test(t)) return 'political';
-  if (/flood|famine|food|trade|money|work|demurrage|tax|bank/.test(t)) return 'economic';
-  if (/gossip|speak|chapel|faith|piety|worship|convert|festival|heard_|relationship|welcome/.test(t)) return 'social';
+  if (/flood|famine|drought|pollution|food|trade|money|work|demurrage|tax|bank/.test(t)) return 'economic';
   return 'social';
+}
+function memoryMatchesFilter(entry, filter) {
+  if (!filter || filter === 'all') return true;
+  const cls = classifyMemory(entry);
+  if (filter === 'political') return cls === 'political' || cls === 'votes';
+  if (filter === 'votes') return cls === 'votes';
+  return cls === filter;
 }
 function roleOf(id) {
   const t = (AGENTS[id] && AGENTS[id].traits) || {};
-  const pairs = Object.entries(t);
-  if (!pairs.length) return 'Resident';
-  pairs.sort((a, b) => b[1] - a[1]);
   const map = {
     industriousness: 'Maker', sociability: 'Organizer', generosity: 'Mediator',
     rule_respect: 'Clerk', risk_tolerance: 'Speculator'
   };
+  const pairs = Object.entries(t).filter(([k]) => map[k]);
+  if (!pairs.length) return 'Resident';
+  pairs.sort((a, b) => b[1] - a[1]);
   return map[pairs[0][0]] || 'Resident';
 }
 function lawCount(rules, enacted) {
@@ -128,6 +167,7 @@ function notableKind(kind) {
           'vote_suspended','lobby_succeeded','proposal_deadlocked','notoriety',
           'converted','worship_session','festival_ended','faith_leader',
           'leader_seated','leader_elected','leader_impeached','leader_stepped_down',
+          'llm_fallback',
           'bankrupt','going_bankrupt','recovered'].includes(kind);
 }
 function eventTone(kind) {
@@ -166,6 +206,7 @@ function eventTitle(kind) {
   if (kind === 'leader_elected') return 'Leader elected';
   if (kind === 'leader_impeached') return 'Impeached';
   if (kind === 'leader_stepped_down') return 'Leader stepped down';
+  if (kind === 'llm_fallback') return 'Model fallback';
   if (kind === 'bankrupt') return 'Bankrupt';
   if (kind === 'going_bankrupt') return 'Going bankrupt';
   if (kind === 'recovered') return 'Recovered';
@@ -219,6 +260,7 @@ function describeEvent(e) {
   if (e.kind === 'leader_elected') return (e.name || nameOf(e.agent)) + ' is elected town leader';
   if (e.kind === 'leader_impeached') return (e.name || nameOf(e.agent)) + ' is impeached';
   if (e.kind === 'leader_stepped_down') return (e.name || nameOf(e.agent)) + ' steps down' + (e.reason ? ' (' + e.reason + ')' : '');
+  if (e.kind === 'llm_fallback') return nameOf(e.agent) + ': model proposed ' + (e.model_proposed || 'nothing') + ', engine used ' + (e.engine_action || 'a rule action');
   if (e.kind === 'bankrupt') return (e.name || nameOf(e.agent)) + ' is bankrupt' + (e.livelihood ? ' (' + e.livelihood + ')' : '') + ' — still seated';
   if (e.kind === 'going_bankrupt') return (e.name || nameOf(e.agent)) + ' is going bankrupt';
   if (e.kind === 'recovered') return (e.name || nameOf(e.agent)) + ' recovered';
@@ -340,24 +382,21 @@ function compareForks() {
   }
   const box = document.getElementById('compareBox');
   if (!box) return;
-  if (forkMarks.length < 2) {
-    box.style.display = 'block';
-    box.textContent = 'Mark two ticks first. This compares recorded vitals; it does not rewind the live engine.';
-    return;
-  }
-  const [a, b] = forkMarks;
   box.style.display = 'block';
-  box.innerHTML = '<b>Compare marked ticks</b><br>t' + a.tick + ' → Gini ' + a.gini + ', happiness ' +
-    (a.happy * 100).toFixed(0) + '%, crises ' + a.crises + ', inventions ' + a.inventions +
-    '<br>t' + b.tick + ' → Gini ' + b.gini + ', happiness ' + (b.happy * 100).toFixed(0) +
-    '%, crises ' + b.crises + ', inventions ' + b.inventions;
+  box.textContent = 'Open Experiments. Save a checkpoint, then fork. That compares two towns, not two marks on one tape.';
+}
+function setPaused(next) {
+  paused = !!next;
+  document.body.classList.toggle('is-paused', paused);
+  const btn = document.getElementById('pauseBtn');
+  if (btn) btn.textContent = paused ? 'resume' : 'pause';
+  const status = document.getElementById('status');
+  if (status) status.textContent = paused ? 'paused' : 'live';
 }
 async function togglePause() {
   const next = paused ? 'resume' : 'pause';
   const st = await sendControl({ cmd: next });
-  paused = st.paused;
-  const btn = document.getElementById('pauseBtn');
-  if (btn) btn.textContent = paused ? 'resume' : 'pause';
+  setPaused(st.paused);
 }
 async function cycleSpeed() {
   const steps = [0.3, 0.6, 1.2];
@@ -498,6 +537,20 @@ function connectStream(onFrame) {
     frameArchive.push(d.frame);
     if (frameArchive.length > 240) frameArchive.shift();
     onFrame(d.frame);
+  });
+  es.addEventListener('reset', (ev) => {
+    const d = JSON.parse(ev.data);
+    if (d.static_info) {
+      LOCS = d.static_info.locations || LOCS;
+      AGENTS = d.static_info.agents_static || AGENTS;
+      LLM_IDS = d.static_info.llm_agent_ids || [];
+    }
+    latestFrame = d.frame;
+    frameArchive.length = 0;
+    if (d.frame) frameArchive.push(d.frame);
+    setPaused(true);
+    if (typeof window.onTownReset === 'function') window.onTownReset(d.frame);
+    else if (d.frame && onFrame) onFrame(d.frame);
   });
   es.onerror = () => { if (status) status.textContent = 'retrying'; };
 }

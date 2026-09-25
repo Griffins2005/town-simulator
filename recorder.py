@@ -38,6 +38,7 @@ import geography
 import governance
 from agent import Agent
 from engine import Engine
+from memory import public_memory
 from world import World
 
 # Fixed (x, y) layout for the four standard locations, in a 0-1000 by
@@ -214,7 +215,7 @@ class Recorder:
                 "solvency": getattr(agent, "solvency", "ok"),
                 "can_vote_civic": agent.can_vote_on(world.tick, "curfew"),
                 "can_vote_economy": agent.can_vote_on(world.tick, "wealth_tax"),
-                "memories": [m.as_text() for m in agent.memory.recent(16)],
+                "memories": [public_memory(m) for m in agent.memory.recent(16)],
             }
         metrics = analytics.compute_metrics(world, self.engine.agents, new_events)
         anomaly_score, anomaly_flags = analytics.score_anomalies(
@@ -278,6 +279,7 @@ class Recorder:
                     "sociability": round(agent.persona.sociability, 3),
                     "rule_respect": round(agent.persona.rule_respect, 3),
                     "risk_tolerance": round(agent.persona.risk_tolerance, 3),
+                    "wanderlust": round(getattr(agent.persona, "wanderlust", 0.35), 3),
                     "piety": round(getattr(agent.persona, "piety", 0.2), 3),
                 },
                 "faith": getattr(agent.persona, "faith", "unaffiliated"),

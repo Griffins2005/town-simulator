@@ -172,10 +172,21 @@ class Engine:
         records = []
         for agent_id, intent in intents.items():
             result = actions.execute(self.agents[agent_id], intent, self.world, self.agents)
-            records.append(decision_record.assemble(
+            rec = decision_record.assemble(
                 agent_id, self.world.tick, perceptions[agent_id],
                 drafts[agent_id], result, reused[agent_id],
-            ).to_dict())
+            )
+            intel = rec.intelligence or {}
+            if intel.get("source") == "fallback" and not reused[agent_id]:
+                self.world.log_event(
+                    "llm_fallback",
+                    agent=agent_id,
+                    reason=intel.get("fallback_reason"),
+                    model_proposed=(intel.get("model_proposed") or {}).get("action"),
+                    engine_action=intel.get("engine_action"),
+                    accepted=intel.get("engine_accepted"),
+                )
+            records.append(rec.to_dict())
         self.last_decision_records = records
 
         # Clock-driven housekeeping: tally any proposals whose voting
@@ -413,6 +424,7 @@ class Engine:
             self_faith=own_faith,
             self_faith_name=faith.faith_name(own_faith),
             self_piety=getattr(agent.persona, "piety", 0.2),
+            self_wanderlust=getattr(agent.persona, "wanderlust", 0.35),
             nearby_faiths={aid: getattr(self.agents[aid].persona, "faith", "unaffiliated")
                            for aid in others_here},
             proposer_faith=proposer_faith,

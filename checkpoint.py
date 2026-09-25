@@ -7,15 +7,24 @@ A fork rebuilds a second Engine from that snapshot, optionally injects
 one crisis, and runs it for N ticks. The live module state is put back
 before the function returns, so the watching town keeps its own clock.
 
-Compare is control (same snapshot, no inject) vs treatment (one inject).
+Compare is control vs treatment. Default: both towns stay rule-based
+and treatment gets one inject. brains="ab" is the same snapshot with
+all-rule vs the first three agents on Groq. Persist writes a pickle
+under saves/ so the town can come back after the process dies.
+
 The Decider still only proposes; the engine still validates.
 """
 
 from __future__ import annotations
 
 import copy
+import json
+import os
+import pickle
 import random
 from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
 
 import chaos
 import economy
@@ -31,7 +40,12 @@ from world import Location, World
 
 FORK_TICKS_DEFAULT = 12
 FORK_TICKS_MAX = 24
-INJECT_KINDS = ("flood", "famine", "unrest", "bank_run", "market_shock")
+FORK_LLM_TICKS_MAX = 8
+FORK_LLM_AGENTS = 3
+INJECT_KINDS = ("flood", "famine", "unrest", "bank_run", "market_shock", "drought", "pollution")
+SAVE_DIR = Path(__file__).resolve().parent / "saves"
+LATEST_SAVE = SAVE_DIR / "latest.pkl"
+INDEX_PATH = SAVE_DIR / "index.json"
 
 
 def capture_modules() -> dict:
@@ -111,6 +125,7 @@ def _agent_to_dict(agent: Agent) -> dict:
             "sociability": persona.sociability,
             "rule_respect": persona.rule_respect,
             "risk_tolerance": persona.risk_tolerance,
+            "wanderlust": getattr(persona, "wanderlust", 0.35),
             "faith": getattr(persona, "faith", "unaffiliated"),
             "piety": getattr(persona, "piety", 0.2),
             "livelihood": getattr(persona, "livelihood", "laborer"),
@@ -168,6 +183,7 @@ def _agent_from_dict(row: dict, rng: random.Random) -> Agent:
             sociability=float(p.get("sociability") or 0.5),
             rule_respect=float(p.get("rule_respect") or 0.5),
             risk_tolerance=float(p.get("risk_tolerance") or 0.5),
+            wanderlust=float(p.get("wanderlust") or 0.35),
             faith=p.get("faith") or "unaffiliated",
             piety=float(p.get("piety") or 0.2),
             livelihood=p.get("livelihood") or "laborer",
@@ -205,8 +221,40 @@ def rebuild(snapshot: dict) -> Engine:
     return engine
 
 
-def _run_branch(snapshot: dict, ticks: int, inject: str | None, intensity) -> tuple[dict, list]:
+def attach_llm(engine: Engine, n: int = FORK_LLM_AGENTS, model: str | None = None) -> list[str]:
+    """Seat Groq on the first n agents. Rule-based stays on everyone else."""
+    from llm_decider import LLMDecider, require_groq
+
+    require_groq()
+    ids = sorted(engine.agents)[: max(0, int(n))]
+    for agent_id in ids:
+        engine.agents[agent_id].decider = LLMDecider(verbose=False, model=model)
+    return ids
+
+
+def _llm_ready() -> tuple[bool, str]:
+    if not os.environ.get("GROQ_API_KEY"):
+        return False, "set GROQ_API_KEY to run the 3-LLM fork"
+    try:
+        from llm_decider import require_groq
+        require_groq()
+    except Exception as exc:
+        return False, str(exc)
+    return True, ""
+
+
+def _run_branch(
+    snapshot: dict,
+    ticks: int,
+    inject: str | None,
+    intensity,
+    brains: str = "rule",
+    model: str | None = None,
+) -> tuple[dict, list]:
     engine = rebuild(snapshot)
+    llm_ids: list[str] = []
+    if brains == "llm":
+        llm_ids = attach_llm(engine, model=model)
     if inject in INJECT_KINDS:
         chaos.inject_crisis(engine.world, engine.agents, inject, intensity, engine.rng)
     rec = Recorder(engine)
@@ -214,6 +262,9 @@ def _run_branch(snapshot: dict, ticks: int, inject: str | None, intensity) -> tu
     for _ in range(max(0, ticks)):
         frames.append(rec.step())
     last = frames[-1] if frames else rec.peek()
+    last = dict(last)
+    last["_brains"] = brains
+    last["_llm_ids"] = llm_ids
     return last, frames
 
 
@@ -222,15 +273,43 @@ def experiment(
     ticks: int = FORK_TICKS_DEFAULT,
     inject: str | None = None,
     intensity: str | float = "serious",
+    brains: str = "rule",
+    model: str | None = None,
 ) -> dict:
-    """Control vs treatment. Live module state is restored on the way out."""
-    ticks = max(1, min(FORK_TICKS_MAX, int(ticks or FORK_TICKS_DEFAULT)))
+    """Control vs treatment. Live module state is restored on the way out.
+
+    brains="rule" (default): both towns stay rule-based; treatment gets the inject.
+    brains="ab": same snapshot, all-rule vs first three on Groq; the same
+    inject (or none) is applied to both so the brains are the variable.
+    """
+    brains = (brains or "rule").strip().lower()
+    if brains in ("llm", "llm_ab", "compare_brains"):
+        brains = "ab"
     if inject in ("", "none", "None"):
         inject = None
+    cap = FORK_LLM_TICKS_MAX if brains == "ab" else FORK_TICKS_MAX
+    ticks = max(1, min(cap, int(ticks or FORK_TICKS_DEFAULT)))
+    if brains == "ab":
+        ok, why = _llm_ready()
+        if not ok:
+            return {"error": why}
+
     live = capture_modules()
     try:
-        control, control_frames = _run_branch(snapshot, ticks, None, intensity)
-        treatment, treat_frames = _run_branch(snapshot, ticks, inject, intensity)
+        if brains == "ab":
+            control, control_frames = _run_branch(
+                snapshot, ticks, inject, intensity, brains="rule", model=model
+            )
+            treatment, treat_frames = _run_branch(
+                snapshot, ticks, inject, intensity, brains="llm", model=model
+            )
+        else:
+            control, control_frames = _run_branch(
+                snapshot, ticks, None, intensity, brains="rule", model=model
+            )
+            treatment, treat_frames = _run_branch(
+                snapshot, ticks, inject, intensity, brains="rule", model=model
+            )
     finally:
         apply_modules(live)
     start_tick = snapshot.get("tick", 0)
@@ -240,10 +319,58 @@ def experiment(
         "ticks": ticks,
         "inject": inject,
         "intensity": intensity if inject else None,
+        "brains": brains,
+        "control_brains": "rule",
+        "treatment_brains": "llm" if brains == "ab" else "rule",
         "control": control,
         "treatment": treatment,
         "diff": diff_frames(control, treatment, control_frames, treat_frames),
     }
+
+
+def persist(snapshot: dict, label: str | None = None) -> dict:
+    """Write the snapshot to saves/latest.pkl and a dated archive file."""
+    SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = pickle.dumps(snapshot, protocol=4)
+    LATEST_SAVE.write_bytes(payload)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    slug = "".join(ch for ch in (label or "town") if ch.isalnum() or ch in "-_")[:24] or "town"
+    name = f"{slug}_{stamp}.pkl"
+    path = SAVE_DIR / name
+    path.write_bytes(payload)
+    item = {
+        "id": stamp,
+        "tick": snapshot.get("tick"),
+        "path": name,
+        "saved_at": stamp,
+        "label": label or "town",
+    }
+    index = [row for row in list_saves() if row.get("path") != name]
+    index.append(item)
+    INDEX_PATH.write_text(json.dumps(index[-16:], indent=2))
+    return item
+
+
+def list_saves() -> list[dict]:
+    if not INDEX_PATH.exists():
+        return []
+    try:
+        rows = json.loads(INDEX_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [row for row in rows if isinstance(row, dict) and (SAVE_DIR / str(row.get("path") or "")).exists()]
+
+
+def load_save(name: str | None = None) -> dict | None:
+    """Load latest.pkl, or a named archive under saves/."""
+    path = LATEST_SAVE if not name or name in ("latest", "latest.pkl") else SAVE_DIR / Path(name).name
+    if not path.exists() or path.parent != SAVE_DIR:
+        return None
+    try:
+        blob = pickle.loads(path.read_bytes())
+    except Exception:
+        return None
+    return blob if isinstance(blob, dict) else None
 
 
 def _leader_name(frame: dict) -> str:

@@ -118,6 +118,7 @@
             <label><input type="radio" name="memf" value="political"> Political</label>
             <label><input type="radio" name="memf" value="social"> Social</label>
             <label><input type="radio" name="memf" value="economic"> Economic</label>
+            <label><input type="radio" name="memf" value="votes"> Why I voted</label>
             <label><input type="radio" name="memf" value="inventions"> Inventions</label>
           </div>
           <div class="tabs">
@@ -132,6 +133,7 @@
       </div>
 
       <div id="crisisBanner" class="glass"></div>
+      <div id="viewBanner" class="glass"></div>
       <div id="labPeople" class="glass lab-panel" data-lab="people">
         <h2 class="panel-title">People</h2>
         <input class="lab-search" id="peopleSearch" type="search" placeholder="Search residents">
@@ -152,38 +154,59 @@
       </div>
       <div id="labExperiments" class="glass lab-panel" data-lab="experiments">
         <h2 class="panel-title">Experiments</h2>
-        <div class="tiny" style="margin-bottom:8px">Save the live engine. Fork it, inject one change, and compare two towns after N ticks. The watching town is not rewound.</div>
-        <button type="button" id="saveCheckpointBtn">Save checkpoint</button>
-        <button type="button" id="returnLiveBtn">Return to live</button>
-        <div id="checkpointList" class="tiny" style="margin-top:10px">no checkpoints yet</div>
-        <div id="forkForm" class="tiny" style="margin-top:10px; display:none">
-          <div>Fork <b id="forkFromLabel">#—</b></div>
-          <label>Inject
-            <select id="forkInject">
-              <option value="unrest">unrest</option>
-              <option value="flood">flood</option>
-              <option value="famine">famine</option>
-              <option value="bank_run">bank run</option>
-              <option value="none">none (replay)</option>
-            </select>
-          </label>
-          <label>Intensity
-            <select id="forkIntensity">
-              <option value="mild">mild</option>
-              <option value="serious" selected>serious</option>
-              <option value="severe">severe</option>
-            </select>
-          </label>
-          <label>Ticks
-            <select id="forkTicks">
-              <option value="8">8</option>
-              <option value="12" selected>12</option>
-              <option value="20">20</option>
-            </select>
-          </label>
-          <button type="button" id="runForkBtn">Run experiment</button>
+        <p class="lab-lead">Fork a saved town. The variable is one shock, or the same seed with three Groq seats. Restore puts a snapshot on the live engine. A fork does not.</p>
+        <div id="intelMix" class="lab-meta"></div>
+        <div class="lab-toolbar">
+          <button type="button" id="saveCheckpointBtn">Save checkpoint</button>
+          <button type="button" id="persistBtn">Save to disk</button>
+          <button type="button" id="loadDiskBtn">Load disk</button>
+          <button type="button" id="returnLiveBtn">Return to live</button>
         </div>
-        <div id="compareBox" class="tiny" style="margin-top:10px"></div>
+        <h3 class="panel-sub">In memory</h3>
+        <div id="checkpointList" class="tiny">no checkpoints yet</div>
+        <h3 class="panel-sub">On disk</h3>
+        <div id="diskList" class="tiny">no town on disk yet</div>
+        <div id="forkForm" class="fork-form" hidden>
+          <div class="fork-head">Fork <b id="forkFromLabel">#—</b></div>
+          <div class="fork-grid">
+            <label>Inject
+              <select id="forkInject">
+                <option value="unrest">unrest</option>
+                <option value="flood">flood</option>
+                <option value="famine">famine</option>
+                <option value="drought">drought</option>
+                <option value="pollution">pollution</option>
+                <option value="bank_run">bank run</option>
+                <option value="none">none (replay)</option>
+              </select>
+            </label>
+            <label>Intensity
+              <select id="forkIntensity">
+                <option value="mild">mild</option>
+                <option value="serious" selected>serious</option>
+                <option value="severe">severe</option>
+              </select>
+            </label>
+            <label>Ticks
+              <select id="forkTicks">
+                <option value="8">8</option>
+                <option value="12" selected>12</option>
+                <option value="20">20</option>
+              </select>
+            </label>
+            <label>Brains
+              <select id="forkBrains">
+                <option value="rule">all rule</option>
+                <option value="ab">all-rule vs 3-LLM</option>
+              </select>
+            </label>
+          </div>
+          <div class="lab-toolbar">
+            <button type="button" id="runForkBtn" class="primary">Run experiment</button>
+            <button type="button" id="restoreLiveBtn">Restore onto live</button>
+          </div>
+        </div>
+        <div id="compareBox" class="compare-box"></div>
       </div>
     </main>
 
@@ -219,6 +242,14 @@
             <button type="button" data-crisis="flood" data-intensity="mild">mild</button>
             <button type="button" data-crisis="flood" data-intensity="serious">serious</button>
             <button type="button" data-crisis="flood" data-intensity="severe">severe</button>
+            <div class="tiny" style="margin:6px 2px 4px">Drought</div>
+            <button type="button" data-crisis="drought" data-intensity="mild">mild</button>
+            <button type="button" data-crisis="drought" data-intensity="serious">serious</button>
+            <button type="button" data-crisis="drought" data-intensity="severe">severe</button>
+            <div class="tiny" style="margin:6px 2px 4px">Pollution</div>
+            <button type="button" data-crisis="pollution" data-intensity="mild">mild</button>
+            <button type="button" data-crisis="pollution" data-intensity="serious">serious</button>
+            <button type="button" data-crisis="pollution" data-intensity="severe">severe</button>
           </div>
         </div>
         <div class="menu up" id="moreMenu" data-up="1">
@@ -229,7 +260,7 @@
             <div class="menu-row" id="exportTrace" tabindex="0">Export trace</div>
           </div>
         </div>
-        <div id="tickClock"><b id="tickNum">Tick 0</b><div id="forkNote">save a checkpoint to fork</div></div>
+        <div id="tickClock"><b id="tickNum">Tick 0</b><div id="forkNote">no checkpoint yet</div></div>
       </div>
       <div id="timelineWrap">
         <div id="timeline"></div>
@@ -294,12 +325,13 @@ const TRAIT_MEANING = {
   sociability: 'how often they speak and gossip',
   rule_respect: 'how often they propose laws and vote yes',
   risk_tolerance: 'how they act in a bank run or shock',
+  wanderlust: 'how readily they leave a sticky room for the next street',
   piety: 'how much their faith pulls them to chapel, hall, or farm'
 };
 const LIVELIHOOD_MEANING = {
-  farmer: 'climate work — flood and famine hit this livelihood first',
+  farmer: 'climate work — flood, famine, and drought hit this livelihood first',
   trader: 'market and bank — a bank run wipes balances first',
-  laborer: 'street wages — unrest shuts the square'
+  laborer: 'street wages — unrest and workshop pollution hit this livelihood first'
 };
 function field(label, value, hint) {
   return '<div class="field" title="' + escapeHtml(hint || label) + '"><div class="k">' +
@@ -315,6 +347,21 @@ let viewingCheckpoint = null;
 
 function locOf(name) {
   return VISUAL[name] || LOCS[name] || { x: 800, y: 450 };
+}
+
+function padOf(key) {
+  const land = LANDUSE[key];
+  if (!land) {
+    const v = locOf(key);
+    return { x: v.x, y: v.y + 8, rx: 36, ry: 22 };
+  }
+  const north = key === 'farm' ? 0.38 : 0.12;
+  return {
+    x: land.cx,
+    y: land.cy - land.ry * north,
+    rx: Math.max(28, land.rx * 0.55),
+    ry: Math.max(18, land.ry * 0.38)
+  };
 }
 
 function drawStreets(frame) {
@@ -469,6 +516,24 @@ function drawCrisis(frame) {
       t.textContent = crisisLevel('bank_run', frame).toUpperCase() + ' BANK RUN';
       g.appendChild(t);
     }
+    if (tag === 'drought') {
+      const farm = locOf('farm');
+      const chapel = locOf('chapel');
+      g.appendChild(svgEl('ellipse', { cx: farm.x, cy: farm.y + 16, rx: 160, ry: 90, fill: '#c4a35a', opacity: 0.28 + m * 0.25 }));
+      const t = svgEl('text', { x: farm.x, y: farm.y - 40, fill: '#5a3a10', 'font-size': 15, 'font-weight': 800, 'text-anchor': 'middle' });
+      t.textContent = crisisLevel('drought', frame).toUpperCase() + ' DROUGHT';
+      g.appendChild(t);
+      const t2 = svgEl('text', { x: chapel.x, y: chapel.y - 44, fill: '#5a3a10', 'font-size': 12, 'font-weight': 700, 'text-anchor': 'middle' });
+      t2.textContent = 'CHAPEL ARGUES WATER';
+      g.appendChild(t2);
+    }
+    if (tag === 'pollution') {
+      const shop = locOf('workshop');
+      g.appendChild(svgEl('ellipse', { cx: shop.x, cy: shop.y - 10, rx: 90 + m * 30, ry: 60 + m * 20, fill: '#5a6a48', opacity: 0.32 + m * 0.22 }));
+      const t = svgEl('text', { x: shop.x, y: shop.y - 52, fill: '#2a3a18', 'font-size': 14, 'font-weight': 800, 'text-anchor': 'middle' });
+      t.textContent = crisisLevel('pollution', frame).toUpperCase() + ' POLLUTION';
+      g.appendChild(t);
+    }
   });
 }
 
@@ -544,6 +609,14 @@ function updateCrisisBanner(frame) {
   el.innerHTML = '<b>' + escapeHtml(bits.join(' · ')) + '</b>';
 }
 
+function updateViewBanner(text) {
+  const el = document.getElementById('viewBanner');
+  if (!el) return;
+  if (!text) { el.className = 'glass'; el.innerHTML = ''; return; }
+  el.className = 'glass on';
+  el.innerHTML = escapeHtml(text);
+}
+
 function applyMapChrome() {
   const wrap = document.getElementById('townWrap');
   wrap.className = 'view-' + mapView;
@@ -566,19 +639,23 @@ function applyMapChrome() {
   if (latestFrame) updateTown(latestFrame);
 }
 
-function layoutCluster(n, loc) {
+function layoutCluster(n, pad) {
   if (n <= 0) return [];
-  if (n === 1) return [{ x: loc.x, y: loc.y + 22 }];
+  if (n === 1) return [{ x: pad.x, y: pad.y }];
   const cols = Math.min(4, Math.ceil(Math.sqrt(n)));
-  const gapX = 26, gapY = 30;
-  const startX = loc.x - ((cols - 1) * gapX) / 2;
-  const startY = loc.y + 14;
+  const rows = Math.ceil(n / cols);
+  const gapX = Math.min(26, (pad.rx * 2) / Math.max(1, cols));
+  const gapY = Math.min(28, (pad.ry * 2) / Math.max(1, rows));
+  const startX = pad.x - ((cols - 1) * gapX) / 2;
+  const startY = pad.y - ((rows - 1) * gapY) / 2;
   const out = [];
-  for (let i = 0; i < n; i++) out.push({ x: startX + (i % cols) * gapX, y: startY + Math.floor(i / cols) * gapY });
+  for (let i = 0; i < n; i++) {
+    out.push({ x: startX + (i % cols) * gapX, y: startY + Math.floor(i / cols) * gapY });
+  }
   return out;
 }
 
-function drawAgentToken(id, cx, cy, factionId, factionLabel) {
+function drawAgentToken(id, cx, cy, factionId, factionLabel, showName) {
   const color = agentColor(id);
   const isLLM = LLM_IDS.includes(id);
   const grp = svgEl('g', { transform: 'translate(' + cx + ',' + cy + ')', class: 'hit' });
@@ -595,9 +672,11 @@ function drawAgentToken(id, cx, cy, factionId, factionLabel) {
     'stroke-width': 2,
     opacity: muted ? 0.5 : 1
   }));
-  const label = svgEl('text', { x: 0, y: 20, 'text-anchor': 'middle', 'font-size': 9, fill: '#243028' });
-  label.textContent = nameOf(id).split(' ')[0];
-  grp.appendChild(label);
+  if (showName !== false) {
+    const label = svgEl('text', { x: 0, y: 20, 'text-anchor': 'middle', 'font-size': 9, fill: '#243028' });
+    label.textContent = nameOf(id).split(' ')[0];
+    grp.appendChild(label);
+  }
   const title = svgEl('title', {});
   if (mapLayers.faith && isFaithLeader(id, latestFrame)) {
     grp.appendChild(svgEl('circle', { cx: 0, cy: -1, r: 11.5, fill: 'none', stroke: '#c4a35a', 'stroke-width': 1.6 }));
@@ -628,20 +707,18 @@ function updateTown(frame) {
   Object.entries(frame.agents).forEach(([id, st]) => { (byLoc[st.location] = byLoc[st.location] || []).push(id); });
   if (mapLayers.residents) {
     Object.entries(byLoc).forEach(([key, list]) => {
-      const loc = locOf(key);
-      const spots = layoutCluster(list.length, loc);
+      const spots = layoutCluster(list.length, padOf(key));
       list.forEach((id, i) => {
         const factionId = (frame.factions || {})[id];
         pos[id] = spots[i];
-        const token = drawAgentToken(id, spots[i].x, spots[i].y, factionId, factionId ? factionName(factionId, frame) : null);
+        const token = drawAgentToken(id, spots[i].x, spots[i].y, factionId, factionId ? factionName(factionId, frame) : null, list.length < 3);
         token.addEventListener('click', () => selectAgent(id));
         g.appendChild(token);
       });
     });
   } else {
     Object.entries(byLoc).forEach(([key, list]) => {
-      const loc = locOf(key);
-      const spots = layoutCluster(list.length, loc);
+      const spots = layoutCluster(list.length, padOf(key));
       list.forEach((id, i) => { pos[id] = spots[i]; });
     });
   }
@@ -783,10 +860,24 @@ function updateInspector(id, frame) {
   } else {
     const perc = rec.perceived || {};
     const val = rec.validation || {};
+    const intel = rec.intelligence || {};
+    const modelAct = intel.model_proposed && intel.model_proposed.action;
+    let intelLine = intel.source || 'rule';
+    if (intel.source === 'llm') {
+      intelLine = 'model proposed ' + (modelAct || intel.engine_action) +
+        (intel.engine_accepted ? ' — engine accepted' : ' — engine rejected (' + (val.reason || '') + ')');
+    } else if (intel.source === 'fallback') {
+      intelLine = 'model proposed ' + (modelAct || 'nothing') +
+        ', engine used ' + (intel.engine_action || 'a rule action') +
+        (intel.fallback_reason ? ' (' + intel.fallback_reason + ')' : '');
+    } else {
+      intelLine = 'rule-based · ' + (intel.engine_action || (rec.chosen_intent || {}).action || '');
+    }
     document.getElementById('trace').innerHTML =
       row('Perceived', escapeHtml(perc.location || st.location) + ' · problems: ' + escapeHtml((perc.problems || []).join(', ') || 'none')) +
-      row('Remembered', filterMemories(rec.retrieved_memories || []).map(escapeHtml).join('<br>') || 'none in this filter') +
+      row('Remembered', filterMemories(rec.retrieved_memories || []).map(memoryText).map(escapeHtml).join('<br>') || 'none in this filter') +
       row('Considered', consideredBars(rec.considered_actions || [])) +
+      row('Intelligence', escapeHtml(intelLine)) +
       row('Chose', escapeHtml((rec.chosen_intent || {}).action || '') + ' ' + escapeHtml(JSON.stringify((rec.chosen_intent || {}).args || {}))) +
       row('Validated', (val.ok ? 'Legal' : 'Rejected') + ' — ' + escapeHtml(val.reason || '')) +
       row('Consequence', (rec.consequences || []).map(escapeHtml).join('; ') || 'none');
@@ -795,8 +886,7 @@ function updateInspector(id, frame) {
 }
 
 function filterMemories(list) {
-  if (memFilter === 'all') return list;
-  return list.filter(t => classifyMemory(t) === memFilter);
+  return (list || []).filter(t => memoryMatchesFilter(t, memFilter));
 }
 
 function row(label, body) {
@@ -857,10 +947,31 @@ function renderExtra(id, frame) {
     const rec = (frame.decision_records || []).find(r => r.agent_id === id);
     const pool = (st.memories && st.memories.length) ? st.memories : ((rec && rec.retrieved_memories) || []);
     const shown = filterMemories(pool);
+    const votes = (st.memories || []).filter(m => classifyMemory(m) === 'votes');
     box.innerHTML = (shown.length
-      ? shown.map(escapeHtml).join('<br>')
+      ? shown.map(m => {
+          const who = memorySubject(m);
+          const tick = memoryTick(m);
+          return '<div class="mem-row"' +
+            (who ? ' data-subject="' + escapeHtml(who) + '"' : '') +
+            (tick != null ? ' data-tick="' + tick + '"' : '') + '>' +
+            escapeHtml(memoryText(m)) +
+            (who ? ' · ' + escapeHtml(nameOf(who)) : '') +
+            '</div>';
+        }).join('')
       : 'no memories in this filter') +
-      '<div class="legend">These are things this person remembers. The filter above keeps political, social, economic, or invention memories.</div>';
+      (votes.length && memFilter === 'all'
+        ? '<div class="tiny" style="margin-top:8px">WHY I VOTED</div>' +
+          votes.slice(-4).map(m => '<div class="tiny">' + escapeHtml(memoryText(m)) + '</div>').join('')
+        : '') +
+      '<div class="legend">Filter uses memory kind, not a keyword search. Click a name to open that person. Why I voted is the ballot index.</div>';
+    box.querySelectorAll('.mem-row[data-subject]').forEach(node => {
+      node.style.cursor = 'pointer';
+      node.addEventListener('click', () => {
+        const who = node.getAttribute('data-subject');
+        if (who && frame.agents[who]) selectAgent(who);
+      });
+    });
   }
 }
 
@@ -1058,7 +1169,7 @@ function renderForensicsLab(frame) {
   const rows = [];
   if (selectedId && frame.agents[selectedId]) {
     const st = frame.agents[selectedId];
-    (st.memories || []).forEach(m => rows.push({ who: nameOf(selectedId), text: m, kind: classifyMemory(m) }));
+    (st.memories || []).forEach(m => rows.push({ who: nameOf(selectedId), text: memoryText(m), kind: classifyMemory(m) }));
   }
   feedLog.slice(0, 40).forEach(e => {
     rows.push({ who: 'town', text: e.kind + ' t' + e.tick, kind: e.kind });
@@ -1085,11 +1196,22 @@ function vitalsOf(frame) {
   };
 }
 
+let diskSaves = [];
+
+function applyLabStatus(res) {
+  if (!res) return;
+  if (res.checkpoints) {
+    checkpoints.length = 0;
+    res.checkpoints.forEach(c => checkpoints.push(c));
+  }
+  if (res.saves) diskSaves = res.saves;
+  renderExperiments();
+}
+
 function saveCheckpoint() {
   sendControl({ cmd: 'checkpoint' }).then((res) => {
     if (!res || res.error) return;
-    checkpoints.length = 0;
-    (res.checkpoints || []).forEach(c => checkpoints.push(c));
+    applyLabStatus(res);
     const note = document.getElementById('forkNote');
     if (note) note.textContent = 'Saved engine at t' + res.tick + ' (#' + res.checkpoint_id + ')';
     forkSourceId = res.checkpoint_id;
@@ -1097,32 +1219,111 @@ function saveCheckpoint() {
   });
 }
 
+function persistTown() {
+  sendControl({ cmd: 'persist', label: 'town' }).then((res) => {
+    if (!res || res.error) return;
+    applyLabStatus(res);
+    const note = document.getElementById('forkNote');
+    if (note) note.textContent = 'Wrote saves/ at t' + res.tick;
+  });
+}
+
+function loadFromDisk() {
+  sendControl({ cmd: 'load', path: 'latest' }).then((res) => {
+    const box = document.getElementById('compareBox');
+    if (!res || res.error) {
+      if (box) box.innerHTML = escapeHtml((res && res.error) || 'no town on disk');
+      return;
+    }
+    applyLabStatus(res);
+    viewingCheckpoint = null;
+    const note = document.getElementById('forkNote');
+    if (note) note.textContent = 'Loaded disk town onto live at t' + res.tick;
+    if (box) box.innerHTML = 'live town restored from disk and paused';
+  });
+}
+
+function restoreOntoLive() {
+  if (!forkSourceId) return;
+  sendControl({ cmd: 'restore', checkpoint_id: forkSourceId }).then((res) => {
+    const box = document.getElementById('compareBox');
+    if (!res || res.error) {
+      if (box) box.innerHTML = escapeHtml((res && res.error) || 'restore failed');
+      return;
+    }
+    applyLabStatus(res);
+    viewingCheckpoint = null;
+    const note = document.getElementById('forkNote');
+    if (note) note.textContent = 'Live town restored to t' + res.tick + ' and paused';
+    if (box) box.innerHTML = 'live engine replaced by checkpoint #' + res.checkpoint_id;
+  });
+}
+
 function renderExperiments() {
+  const mix = document.getElementById('intelMix');
+  if (mix && latestFrame) {
+    const recs = latestFrame.decision_records || [];
+    let llm = 0, fallback = 0, rule = 0;
+    recs.forEach(r => {
+      const s = ((r.intelligence || {}).source) || 'rule';
+      if (s === 'llm') llm += 1;
+      else if (s === 'fallback') fallback += 1;
+      else rule += 1;
+    });
+    mix.textContent = recs.length
+      ? ('This tick: ' + rule + ' rule · ' + llm + ' model · ' + fallback + ' fallback')
+      : 'This tick: no decision records yet';
+  }
   const el = document.getElementById('checkpointList');
-  if (!el) return;
   const form = document.getElementById('forkForm');
+  const disk = document.getElementById('diskList');
+  if (disk) {
+    disk.innerHTML = diskSaves.length
+      ? diskSaves.map(s =>
+          '<div class="lab-row"><b>' + escapeHtml(s.label || 'town') + ' · t' + s.tick + '</b></div>'
+        ).join('')
+      : 'no town on disk yet';
+  }
+  if (!el) return;
   if (!checkpoints.length) {
     el.innerHTML = 'no checkpoints yet';
-    if (form) form.style.display = 'none';
+    if (form) form.hidden = true;
     return;
   }
   el.innerHTML = checkpoints.map(c =>
-    '<div class="lab-row"><b>#' + c.id + ' tick ' + c.tick + '</b>' +
-    '<button type="button" data-fork="' + c.id + '">fork from this</button></div>'
+    '<div class="lab-row' + (c.id === forkSourceId ? ' is-on' : '') + '">' +
+    '<b>#' + c.id + ' · tick ' + c.tick + '</b>' +
+    '<div class="lab-actions"><button type="button" data-fork="' + c.id + '">Use this</button></div></div>'
   ).join('');
   el.querySelectorAll('[data-fork]').forEach(btn => {
     btn.addEventListener('click', () => {
       forkSourceId = Number(btn.dataset.fork);
-      if (form) form.style.display = 'block';
+      if (form) form.hidden = false;
       const lab = document.getElementById('forkFromLabel');
       if (lab) lab.textContent = '#' + forkSourceId;
+      renderExperiments();
     });
   });
   if (form && forkSourceId) {
-    form.style.display = 'block';
+    form.hidden = false;
     const lab = document.getElementById('forkFromLabel');
     if (lab) lab.textContent = '#' + forkSourceId;
   }
+}
+
+function occupancyBlock(a, b) {
+  const left = a || {};
+  const right = b || {};
+  const keys = Array.from(new Set([].concat(Object.keys(left), Object.keys(right))))
+    .filter(k => left[k] || right[k]);
+  if (!keys.length) return '';
+  const rows = keys.map(k => {
+    const l = left[k] || 0;
+    const r = right[k] || 0;
+    return '<tr' + (l !== r ? ' class="diff"' : '') + '><th>' + escapeHtml(k.replace(/_/g, ' ')) +
+      '</th><td>' + l + '</td><td>' + r + '</td></tr>';
+  }).join('');
+  return '<div class="panel-sub">Occupancy</div><table class="compare-table"><tbody>' + rows + '</tbody></table>';
 }
 
 function pair(label, a, b) {
@@ -1131,9 +1332,11 @@ function pair(label, a, b) {
   const occ = (o) => o && typeof o === 'object' && !Array.isArray(o)
     ? Object.entries(o).filter(([, n]) => n).map(([k, n]) => k.replace('_', ' ') + ' ' + n).join(', ') || 'empty'
     : o;
-  const showL = label === 'occupancy' ? occ(a) : left;
-  const showR = label === 'occupancy' ? occ(b) : right;
-  return '<div class="lab-row"><b>' + label + '</b>control ' + showL + '<br>treatment ' + showR + '</div>';
+  const showL = String(label === 'occupancy' ? occ(a) : left);
+  const showR = String(label === 'occupancy' ? occ(b) : right);
+  const changed = showL !== showR;
+  return '<tr' + (changed ? ' class="diff"' : '') + '><th>' + escapeHtml(label) +
+    '</th><td>' + escapeHtml(showL) + '</td><td>' + escapeHtml(showR) + '</td></tr>';
 }
 
 function renderCompare() {
@@ -1146,7 +1349,12 @@ function renderCompare() {
   }
   const d = exp.diff;
   const shock = exp.inject ? (exp.intensity || '') + ' ' + String(exp.inject).replace('_', ' ') : 'no inject';
-  let html = '<b>t' + exp.from_tick + ' → t' + exp.to_tick + ' · ' + escapeHtml(shock) + '</b>';
+  const brains = exp.brains === 'ab'
+    ? 'all-rule vs 3-LLM'
+    : 'all rule';
+  let html = '<div class="fork-head">t' + exp.from_tick + ' → t' + exp.to_tick +
+    ' · ' + escapeHtml(shock) + ' · ' + brains + '</div>';
+  html += '<table class="compare-table"><thead><tr><th></th><th>Control</th><th>Treatment</th></tr></thead><tbody>';
   html += pair('gini', d.gini[0], d.gini[1]);
   html += pair('treasury', d.treasury[0], d.treasury[1]);
   html += pair('leader', d.leader[0], d.leader[1]);
@@ -1154,20 +1362,18 @@ function renderCompare() {
   html += pair('bankrupt', d.bankrupt[0], d.bankrupt[1]);
   html += pair('expelled', d.expelled[0], d.expelled[1]);
   html += pair('laws', d.laws[0], d.laws[1]);
-  html += pair('occupancy', d.occupancy[0], d.occupancy[1]);
   const ev = d.events || {};
   const kinds = Array.from(new Set([].concat(Object.keys(ev.control || {}), Object.keys(ev.treatment || {})))).filter(k =>
     /impeach|elect|leader_|member_expelled|crisis_|bankrupt|rule_/.test(k)
   );
-  if (kinds.length) {
-    html += '<div class="tiny" style="margin-top:8px">EVENTS IN THE FORK</div>';
-    kinds.forEach(k => {
-      html += pair(k.replace(/_/g, ' '), (ev.control || {})[k] || 0, (ev.treatment || {})[k] || 0);
-    });
-  }
-  html += '<div style="margin-top:8px">' +
-    '<button type="button" id="showControlBtn">Show control on map</button> ' +
-    '<button type="button" id="showTreatBtn">Show treatment on map</button></div>';
+  kinds.forEach(k => {
+    html += pair(k.replace(/_/g, ' '), (ev.control || {})[k] || 0, (ev.treatment || {})[k] || 0);
+  });
+  html += '</tbody></table>';
+  html += occupancyBlock(d.occupancy[0], d.occupancy[1]);
+  html += '<div class="lab-toolbar" style="margin-top:10px">' +
+    '<button type="button" id="showControlBtn">Show control</button>' +
+    '<button type="button" id="showTreatBtn">Show treatment</button></div>';
   box.innerHTML = html;
   const show = (frame, label) => {
     if (!frame) return;
@@ -1175,6 +1381,7 @@ function renderCompare() {
     setLab('observe');
     updateTown(frame);
     updateHeader(frame);
+    updateViewBanner('Viewing ' + label + ' · t' + frame.tick + ' · return to live from Experiments');
     const status = document.getElementById('status');
     if (status) status.textContent = 'viewing ' + label + ' t' + frame.tick;
   };
@@ -1189,6 +1396,7 @@ function runFork() {
   const inject = ((document.getElementById('forkInject') || {}).value || 'unrest');
   const intensity = ((document.getElementById('forkIntensity') || {}).value || 'serious');
   const ticks = Number((document.getElementById('forkTicks') || {}).value || 12);
+  const brains = ((document.getElementById('forkBrains') || {}).value || 'rule');
   const box = document.getElementById('compareBox');
   if (box) box.innerHTML = 'running fork…';
   const btn = document.getElementById('runForkBtn');
@@ -1199,6 +1407,7 @@ function runFork() {
     inject: inject === 'none' ? null : inject,
     intensity,
     ticks,
+    brains,
   }).then((res) => {
     if (btn) btn.disabled = false;
     if (!res || res.error) {
@@ -1257,6 +1466,7 @@ function renderFrame(frame) {
   renderRelationships(frame);
   renderPolitics(frame);
   renderForensicsLab(frame);
+  if (labMode === 'experiments') renderExperiments();
   if (!selectedId) {
     const first = Object.keys(frame.agents || {})[0];
     if (first) selectedId = first;
@@ -1302,6 +1512,7 @@ document.querySelectorAll('#rail .navbtn[data-lab]').forEach(a => {
     if (a.dataset.lab === 'economy') return;
     ev.preventDefault();
     viewingCheckpoint = null;
+    updateViewBanner('');
     history.replaceState(null, '', '#' + a.dataset.lab);
     setLab(a.dataset.lab);
   });
@@ -1316,11 +1527,18 @@ const forensicSearch = document.getElementById('forensicSearch');
 if (forensicSearch) forensicSearch.addEventListener('input', () => { if (latestFrame) renderForensicsLab(latestFrame); });
 const saveBtn = document.getElementById('saveCheckpointBtn');
 if (saveBtn) saveBtn.addEventListener('click', saveCheckpoint);
+const persistBtn = document.getElementById('persistBtn');
+if (persistBtn) persistBtn.addEventListener('click', persistTown);
+const loadBtn = document.getElementById('loadDiskBtn');
+if (loadBtn) loadBtn.addEventListener('click', loadFromDisk);
+const restoreBtn = document.getElementById('restoreLiveBtn');
+if (restoreBtn) restoreBtn.addEventListener('click', restoreOntoLive);
 const runForkBtn = document.getElementById('runForkBtn');
 if (runForkBtn) runForkBtn.addEventListener('click', runFork);
 const liveBtn = document.getElementById('returnLiveBtn');
 if (liveBtn) liveBtn.addEventListener('click', () => {
   viewingCheckpoint = null;
+  updateViewBanner('');
   if (latestFrame) {
     updateTown(latestFrame);
     updateHeader(latestFrame);
@@ -1335,7 +1553,7 @@ document.addEventListener('click', (ev) => {
   }
 });
 window.onCrisisInjected = (kind) => {
-  if (['flood', 'famine', 'unrest'].includes(kind)) {
+  if (['flood', 'famine', 'unrest', 'drought', 'pollution'].includes(kind)) {
     mapView = 'topography';
     document.querySelectorAll('#viewMenu .menu-row').forEach(r => r.classList.toggle('is-on', r.dataset.view === 'topography'));
     const trig = document.getElementById('viewTrigger');
@@ -1350,6 +1568,24 @@ window.renderCompareFromMenu = () => {
   renderExperiments();
   if (lastExperiment) renderCompare();
 };
+window.onTownReset = (frame) => {
+  viewingCheckpoint = null;
+  updateViewBanner('');
+  if (frame) renderFrame(frame);
+};
+
+function syncForkTicks() {
+  const brains = document.getElementById('forkBrains');
+  const ticks = document.getElementById('forkTicks');
+  if (!brains || !ticks) return;
+  const llm = brains.value === 'ab';
+  ticks.querySelectorAll('option').forEach(opt => {
+    opt.disabled = llm && Number(opt.value) > 8;
+  });
+  if (llm && Number(ticks.value) > 8) ticks.value = '8';
+}
+const brainsSel = document.getElementById('forkBrains');
+if (brainsSel) brainsSel.addEventListener('change', syncForkTicks);
 
 bootLab(() => {
   drawStaticTown();

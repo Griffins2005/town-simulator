@@ -66,6 +66,7 @@ class DecisionRecord:
     state_changes: list
     consequences: list
     reused_cache: bool = False
+    intelligence: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -99,4 +100,11 @@ def assemble(
         state_changes=list(getattr(result, "state_changes", []) or []),
         consequences=list(getattr(result, "consequences", []) or [result.reason]),
         reused_cache=reused_cache,
+        intelligence={
+            "source": getattr(draft, "source", "rule") or "rule",
+            "model_proposed": getattr(draft, "model_intent", None),
+            "engine_accepted": bool(result.success),
+            "engine_action": draft.intent.action,
+            "fallback_reason": getattr(draft, "fallback_reason", None),
+        },
     )

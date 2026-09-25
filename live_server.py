@@ -14,13 +14,14 @@ not a full bidirectional protocol.
 Usage:
     python3 live_server.py              # rule-based agents (default)
     python3 live_server.py --llm        # mix in LLM-backed agents (needs GROQ_API_KEY)
+    python3 live_server.py --resume     # load saves/latest.pkl if present
+    python3 live_server.py --llm --model llama-3.1-8b-instant
     Then open http://localhost:8765/ (Observe)
     and http://localhost:8765/analytics (charts).
 
 Binds to localhost only — not a public host. Push the repo, clone it
 where you want the lab, and run this file there. Change PORT if 8765
-is taken. Closing the process drops the town; use record_demo.py to
-keep a trace.json.
+is taken. Persist writes saves/; --resume loads the latest.
 """
 
 from __future__ import annotations
@@ -84,7 +85,7 @@ class SimulationBroadcaster:
     one, not accidentally multiply costs or diverge from each other.
     """
 
-    def __init__(self, use_llm: bool) -> None:
+    def __init__(self, use_llm: bool, resume: bool = False, model: str | None = None) -> None:
         """
         Args:
             use_llm: if True, the first NUM_LLM_AGENTS agents use
@@ -92,8 +93,11 @@ class SimulationBroadcaster:
                 rule-based, mirroring main_llm.py's mixed-population
                 pattern exactly. If False (default), every agent is
                 rule-based, mirroring main.py.
+            resume: if True, load saves/latest.pkl when it exists.
+            model: optional Groq model id for LLM seats.
         """
         self.use_llm = use_llm
+        self.model = model
         self._subscribers: list = []
         self._subscribers_lock = threading.Lock()
         self._tick_count = 0
@@ -103,6 +107,12 @@ class SimulationBroadcaster:
         self._control_lock = threading.Lock()
         self._snapshots: list[dict] = []
         self._next_snapshot = 1
+
+        if resume:
+            blob = checkpoint.load_save("latest")
+            if blob:
+                self._install_snapshot(blob, broadcast=False)
+                return
 
         rng = random.Random(SEED)
         economy.reset_offers()
@@ -116,18 +126,54 @@ class SimulationBroadcaster:
 
         world = build_world()
         agents = build_agents(rng, NUM_AGENTS)
-
-        if use_llm:
-            from llm_decider import LLMDecider
-            llm_agent_ids = list(agents.keys())[:NUM_LLM_AGENTS]
-            for agent_id in llm_agent_ids:
-                agents[agent_id].decider = LLMDecider(verbose=True)
-            self.llm_agent_ids = llm_agent_ids
-        else:
-            self.llm_agent_ids = []
-
+        self.llm_agent_ids = self._seat_llm(agents) if use_llm else []
         self.engine = Engine(world, agents, rng=rng)
         self.recorder = Recorder(self.engine)
+
+    def _seat_llm(self, agents: dict) -> list[str]:
+        from llm_decider import LLMDecider
+        ids = list(agents.keys())[:NUM_LLM_AGENTS]
+        for agent_id in ids:
+            agents[agent_id].decider = LLMDecider(verbose=True, model=self.model)
+        return ids
+
+    def _install_snapshot(self, blob: dict, broadcast: bool = True) -> dict:
+        """Put a captured town on the live engine. Does not rewind a fork."""
+        engine = checkpoint.rebuild(blob)
+        self.llm_agent_ids = self._seat_llm(engine.agents) if self.use_llm else []
+        self.engine = engine
+        self.recorder = Recorder(self.engine)
+        frame = self.recorder.peek()
+        if broadcast:
+            self._broadcast("reset", {
+                "frame": frame,
+                "elapsed_seconds": 0,
+                "static_info": self.static_info(),
+            })
+        return frame
+
+    def _remember_snapshot(self, blob: dict) -> dict:
+        item = {
+            "id": self._next_snapshot,
+            "tick": blob.get("tick", self.engine.world.tick),
+            "blob": blob,
+        }
+        self._next_snapshot += 1
+        self._snapshots.append(item)
+        del self._snapshots[:-8]
+        return item
+
+    def _status(self, extra: dict | None = None) -> dict:
+        out = {
+            "paused": self.paused,
+            "delay": self.delay,
+            "tick": self.engine.world.tick,
+            "checkpoints": [{"id": s["id"], "tick": s["tick"]} for s in self._snapshots],
+            "saves": checkpoint.list_saves(),
+        }
+        if extra:
+            out.update(extra)
+        return out
 
     def subscribe(self):
         """Register a new browser connection. Returns a Queue that the
@@ -138,6 +184,15 @@ class SimulationBroadcaster:
         q = queue.Queue()
         with self._subscribers_lock:
             self._subscribers.append(q)
+        try:
+            q.put({
+                "type": "frame",
+                "frame": self.recorder.peek(),
+                "elapsed_seconds": 0,
+                "painted": True,
+            })
+        except Exception:
+            pass
         return q
 
     def unsubscribe(self, q) -> None:
@@ -207,7 +262,7 @@ class SimulationBroadcaster:
                         "text": text[:160],
                     })
                     del self.engine.world.notice_board[:-8]
-                elif kind in ("famine", "unrest", "bank_run", "market_shock", "flood"):
+                elif kind in ("famine", "unrest", "bank_run", "market_shock", "flood", "drought", "pollution"):
                     info = chaos.inject_crisis(
                         self.engine.world, self.engine.agents,
                         kind, intensity, self.engine.rng,
@@ -220,22 +275,44 @@ class SimulationBroadcaster:
                     }
             elif cmd == "checkpoint":
                 blob = checkpoint.capture(self.engine)
-                item = {
-                    "id": self._next_snapshot,
-                    "tick": self.engine.world.tick,
-                    "blob": blob,
-                }
-                self._next_snapshot += 1
-                self._snapshots.append(item)
-                del self._snapshots[:-8]
-                return {
-                    "paused": self.paused, "delay": self.delay,
-                    "tick": self.engine.world.tick,
+                item = self._remember_snapshot(blob)
+                checkpoint.persist(blob, label="checkpoint")
+                return self._status({"checkpoint_id": item["id"]})
+            elif cmd == "persist":
+                blob = checkpoint.capture(self.engine)
+                item = self._remember_snapshot(blob)
+                saved = checkpoint.persist(blob, label=str(body.get("label") or "town"))
+                return self._status({"checkpoint_id": item["id"], "save": saved})
+            elif cmd == "restore":
+                snap_id = body.get("checkpoint_id") or body.get("id")
+                try:
+                    snap_id = int(snap_id)
+                except (TypeError, ValueError):
+                    snap_id = None
+                chosen = next((s for s in self._snapshots if s["id"] == snap_id), None)
+                if chosen is None and self._snapshots:
+                    chosen = self._snapshots[-1]
+                if chosen is None:
+                    return self._status({"error": "save a checkpoint first"})
+                self.paused = True
+                frame = self._install_snapshot(chosen["blob"])
+                return self._status({
+                    "checkpoint_id": chosen["id"],
+                    "restored": True,
+                    "tick": frame.get("tick", self.engine.world.tick),
+                })
+            elif cmd == "load":
+                blob = checkpoint.load_save(body.get("path") or body.get("name") or "latest")
+                if blob is None:
+                    return self._status({"error": "no town on disk — persist first"})
+                item = self._remember_snapshot(blob)
+                self.paused = True
+                frame = self._install_snapshot(blob)
+                return self._status({
                     "checkpoint_id": item["id"],
-                    "checkpoints": [
-                        {"id": s["id"], "tick": s["tick"]} for s in self._snapshots
-                    ],
-                }
+                    "loaded": True,
+                    "tick": frame.get("tick", self.engine.world.tick),
+                })
             elif cmd == "fork":
                 snap_id = body.get("checkpoint_id") or body.get("id")
                 try:
@@ -246,30 +323,32 @@ class SimulationBroadcaster:
                 if chosen is None and self._snapshots:
                     chosen = self._snapshots[-1]
                 if chosen is None:
-                    return {
-                        "paused": self.paused, "delay": self.delay,
-                        "tick": self.engine.world.tick, "error": "save a checkpoint first",
-                    }
+                    return self._status({"error": "save a checkpoint first"})
                 result = checkpoint.experiment(
                     chosen["blob"],
                     ticks=body.get("ticks") or checkpoint.FORK_TICKS_DEFAULT,
                     inject=body.get("inject") or body.get("kind"),
                     intensity=body.get("intensity", "serious"),
+                    brains=body.get("brains") or "rule",
+                    model=body.get("model") or self.model,
                 )
-                return {
-                    "paused": self.paused, "delay": self.delay,
-                    "tick": self.engine.world.tick,
+                if result.get("error"):
+                    return self._status({"error": result["error"], "checkpoint_id": chosen["id"]})
+                return self._status({
                     "checkpoint_id": chosen["id"],
                     "from_tick": result["from_tick"],
                     "to_tick": result["to_tick"],
                     "ticks": result["ticks"],
                     "inject": result["inject"],
                     "intensity": result["intensity"],
+                    "brains": result.get("brains"),
+                    "control_brains": result.get("control_brains"),
+                    "treatment_brains": result.get("treatment_brains"),
                     "diff": result["diff"],
                     "control": result["control"],
                     "treatment": result["treatment"],
-                }
-            return {"paused": self.paused, "delay": self.delay, "tick": self.engine.world.tick}
+                })
+            return self._status()
 
     def stop(self) -> None:
         """Signal the background loop to stop after its current tick."""
@@ -393,12 +472,18 @@ def make_handler(broadcaster: SimulationBroadcaster):
 
 
 def main() -> None:
-    """Parse `--llm` from sys.argv, build the broadcaster, start the
-    simulation in a background thread, and serve the web UI until
-    interrupted with Ctrl+C.
+    """Parse flags, build the broadcaster, start the simulation in a
+    background thread, and serve the web UI until interrupted with Ctrl+C.
     """
     import sys
-    use_llm = "--llm" in sys.argv
+    argv = sys.argv[1:]
+    use_llm = "--llm" in argv
+    resume = "--resume" in argv
+    model = None
+    if "--model" in argv:
+        idx = argv.index("--model")
+        if idx + 1 < len(argv):
+            model = argv[idx + 1]
 
     if use_llm:
         import os
@@ -413,7 +498,7 @@ def main() -> None:
             print(exc)
             return
 
-    broadcaster = SimulationBroadcaster(use_llm=use_llm)
+    broadcaster = SimulationBroadcaster(use_llm=use_llm, resume=resume, model=model)
     sim_thread = threading.Thread(target=broadcaster.run_forever, daemon=True)
     sim_thread.start()
 
@@ -424,6 +509,10 @@ def main() -> None:
     print(f"Analytics page: http://{HOST}:{PORT}/analytics", flush=True)
     mode_desc = (f"LLM-backed ({NUM_LLM_AGENTS} agents via Groq) + rule-based"
                  if use_llm else "fully rule-based")
+    if model:
+        mode_desc += f" [{model}]"
+    if resume and checkpoint.LATEST_SAVE.exists():
+        mode_desc += f" · resumed t{broadcaster.engine.world.tick}"
     print(f"Mode: {mode_desc}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
     try:

@@ -107,3 +107,47 @@ class MemoryLog:
         path for feeding an agent's perception/decision logic.
         """
         return list(self._entries)
+
+
+# Structured filter — kind, not keyword search on as_text().
+VOTE_KINDS = {
+    "cast_vote", "proposal_resolved", "was_lobbied", "was_impeached",
+    "was_elected", "vote_suspended",
+}
+POLITICAL_KINDS = VOTE_KINDS | {
+    "was_expelled", "was_welcomed",
+}
+ECONOMIC_KINDS = {
+    "work", "received_trade_offer", "went_bankrupt", "trade",
+}
+SOCIAL_KINDS = {
+    "gossip", "speak", "worship", "converted", "witnessed_corruption_scandal",
+}
+INVENTION_KINDS = {"invented", "adopted_invention"}
+
+
+def domain_of(kind: str) -> str:
+    """Which inspector filter a memory kind belongs to."""
+    if kind in VOTE_KINDS:
+        return "votes"
+    if kind in INVENTION_KINDS or "invent" in (kind or ""):
+        return "inventions"
+    if kind in POLITICAL_KINDS or (kind or "").startswith("rule"):
+        return "political"
+    if kind in ECONOMIC_KINDS or kind in ("bankrupt", "going_bankrupt"):
+        return "economic"
+    if kind == "crisis":
+        return "economic"
+    return "social"
+
+
+def public_memory(entry: MemoryEntry) -> dict:
+    """What the lab stores per memory: kind first, prose last."""
+    return {
+        "tick": entry.tick,
+        "kind": entry.kind,
+        "subject": entry.subject,
+        "data": dict(entry.data or {}),
+        "domain": domain_of(entry.kind),
+        "text": entry.as_text(),
+    }

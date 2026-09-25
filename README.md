@@ -46,6 +46,8 @@ Core runs (`main.py`, `stress_test.py`, `record_demo.py`,
     python3 record_demo.py          # 200 ticks → trace.json
     python3 live_server.py          # Society Lab at http://localhost:8765/
     python3 live_server.py --llm    # same UI, 3 agents on Groq
+    python3 live_server.py --resume # load saves/latest.pkl if present
+    python3 live_server.py --llm --model llama-3.1-8b-instant
 
 Then open:
 
@@ -77,7 +79,12 @@ agents use `LLMDecider`; the rest stay rule-based. Groq's free tier is
 about 30 RPM; `rate_limiter.py` caps the shared bucket at 24 RPM.
 
 `LLMDecider` defaults to Groq `json_object` mode (`openai/gpt-oss-120b`,
-`reasoning_effort="low"`). Pass `use_strict_schema=True` only if you
+`reasoning_effort="low"`). A cheaper Groq model is optional:
+
+    export TOWNSIM_LLM_MODEL=llama-3.1-8b-instant
+    python3 live_server.py --llm --model llama-3.1-8b-instant
+
+Pass `use_strict_schema=True` only if you
 are re-testing Groq's strict JSON-schema path. Startup prints
 `townsim build: 2026-07-05-v7-repeal-spec-sync` and refuses to run if
 `main_llm.py` and `llm_decider.py` versions disagree.
@@ -110,8 +117,8 @@ LLM mode on that machine:
 Do not commit `.env`, `GROQ_API_KEY`, or any file that holds secrets.
 
 Two towns means two processes. If 8765 is taken, change `PORT` in
-`live_server.py`. Closing the process drops the live town; run
-`python3 record_demo.py` when you need a kept `trace.json`.
+`live_server.py`. Persist writes `saves/`; `--resume` loads the latest.
+`python3 record_demo.py` still writes a kept `trace.json`.
 
 ## File inventory
 
@@ -133,6 +140,7 @@ Two towns means two processes. If 8765 is taken, change `PORT` in
 | `engine.py` | `step()`: perceive, deliberate, validate, record, housekeeping |
 | `town_factory.py` | Shared town: 16 named residents, five locations |
 | `recorder.py` | Wraps `Engine`; per-tick JSON frames |
+| `checkpoint.py` | Serialize, restore, fork, persist `saves/` |
 
 ### Entry points
 
@@ -237,19 +245,22 @@ effect.
 `live_server.py` runs the town on a background thread and streams
 `tick_started` / `frame` events over Server-Sent Events.
 
-**Observe** (`/`): night town, named residents, event feed, open
-proposal (yes / no / quorum), forensics inspector, diamond timeline,
-pause, speed, inject market shock or unrest, mark two ticks and
-compare vitals. Relationships in the rail toggles a social-graph
-overlay. People opens a resident roster.
+**Observe** (`/`): river-valley town, named residents, faith and
+livelihood on the map, event feed, open proposal (yes / no / quorum),
+forensics inspector, diamond timeline, pause, speed, inject flood /
+famine / unrest / drought / pollution / bank run. Experiments save a
+real engine snapshot, fork a second town, and compare control vs
+treatment. Relationships in the rail toggles a social-graph overlay.
+People opens a resident roster.
 
 **Analytics** (`/analytics`): Lorenz curve, money vs reputation, event
 mix, Gini / entropy / anomaly, social graph, occupancy heatmap, domain
 crossings, money by agent, faction membership.
 
-`POST /control` accepts `pause`, `resume`, `speed`, and `inject`
-(`market_shock`, `unrest`, `headline`). Compare-marks does not rewind
-the engine; it diffs recorded vitals.
+`POST /control` accepts `pause`, `resume`, `speed`, `inject`
+(`flood`, `famine`, `unrest`, `bank_run`, `drought`, `pollution`,
+`headline`), `checkpoint`, `persist`, `restore`, `load`, and `fork`
+(optional `brains=ab` for same-seed all-rule vs 3-LLM).
 
 Brand assets live in `static/` (`eidolon-appicon.png`,
 `eidolon-wordmark-ui.png`, favicon). The tab icon is `/favicon.ico`.
@@ -287,8 +298,9 @@ were found. Re-run it after changing `decision.py`, `economy.py`,
    compares offer price to a fair reference. Long-run Gini can still
    rise from compounding variance; demurrage and a voted wealth tax
    are the counterweights.
-4. Market became an absorbing room — `WANDERLUST_CHANCE` in
-   `RuleBasedDecider` gives circulation an independent chance.
+4. Market became an absorbing room — persona `wanderlust` in
+   `RuleBasedDecider` gives circulation an independent, trait-weighted
+   chance.
 5. Early demurrage destroyed money — it now goes to `world.treasury`
    and is redistributed. System money stays constant.
 6. First corruption rates fired ~191 scandals / 1000 ticks — rates
@@ -299,17 +311,16 @@ were found. Re-run it after changing `decision.py`, `economy.py`,
 
 - Rule-based pricing and voting are trait-weighted heuristics. That
   is the layer LLM agents are meant to replace.
-- A second vote from the same agent overwrites the first
-  (`governance.py` keys votes by `agent_id`). Sparse thinking usually
-  prevents a re-vote.
-- `WANDERLUST_CHANCE` is a flat constant, not a personality trait.
+- A second vote from the same agent is refused. Lobby is the path
+  that can still flip a neighbor.
 - Invention kinds are a closed catalog. Agents choose among them;
   they do not author new physics.
 - Experiments save a real engine snapshot, fork a second town, and
-  compare control vs one injected change. The live engine is not
-  rewound.
-- Closing `live_server.py` drops the town. Use `record_demo.py` to
-  keep a `trace.json`.
+  compare control vs treatment. The live engine is not rewound by a
+  fork. Restore / load put a snapshot back on the live town on purpose.
+- Closing `live_server.py` without persist drops the in-memory town.
+  Persist writes `saves/`; `--resume` loads `saves/latest.pkl`.
+  `record_demo.py` still writes a `trace.json`.
 - One simulation per server process. Two towns means two processes
   on different ports.
 - Analytics charts need a network path to cdnjs for Chart.js.

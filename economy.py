@@ -111,6 +111,18 @@ def exposure(agent: Agent, tag: str) -> float:
         if here in ("market", "tavern", "park", "town_hall"):
             hit = max(hit, 0.65)
         return hit
+    if tag == "drought":
+        hit = 1.0 if job == "farmer" else 0.35 if job == "laborer" else 0.3
+        if here in ("farm", "chapel"):
+            hit = max(hit, 0.75)
+        return hit
+    if tag == "pollution":
+        hit = 1.0 if job == "laborer" else 0.4 if job == "trader" else 0.25
+        if here == "workshop":
+            hit = max(hit, 0.9)
+        if here in ("market", "homes"):
+            hit = max(hit, 0.45)
+        return hit
     return 0.2
 
 
@@ -123,6 +135,12 @@ def work_yield_now(world: World, actor: Agent) -> float:
     mag = float((world.crisis_intensity or {}).get("famine", 0) or 0)
     if mag and actor.location == "farm":
         yield_amt *= max(0.2, 1.0 - 0.4 * mag)
+    mag = float((world.crisis_intensity or {}).get("drought", 0) or 0)
+    if mag and actor.location == "farm":
+        yield_amt *= max(0.12, 1.0 - 0.6 * mag)
+    mag = float((world.crisis_intensity or {}).get("pollution", 0) or 0)
+    if mag and actor.location == "workshop":
+        yield_amt *= max(0.2, 1.0 - 0.5 * mag)
     return round(yield_amt, 3)
 
 # Demurrage rate: a small percentage of EVERY agent's money is taxed
@@ -221,8 +239,11 @@ def regenerate_resources(world) -> None:
             if loc.name == "farm":
                 import faith
                 bonus += faith.water_blessing_bonus(world)
+                drought = float((world.crisis_intensity or {}).get("drought", 0) or 0)
+                if drought:
+                    bonus -= RESOURCE_REGEN_RATE * (0.85 * drought)
             loc.resources[DEFAULT_RESOURCE_KIND] = min(
-                RESOURCE_CAP, current + RESOURCE_REGEN_RATE + bonus
+                RESOURCE_CAP, max(0.0, current + RESOURCE_REGEN_RATE + bonus)
             )
 
 
@@ -479,6 +500,13 @@ def apply_crisis_pressure(world: World, agents: dict[str, Agent], rng) -> None:
                     money_cut += agent.money * 0.035 * mag * exp
                     if rng.random() < 0.15 * mag * exp:
                         agent.reputation = max(0.0, agent.reputation - 0.02 * mag)
+                elif tag == "drought":
+                    money_cut += agent.money * 0.025 * mag * exp
+                    food_cut += 0.2 * mag * exp
+                elif tag == "pollution":
+                    money_cut += agent.money * 0.03 * mag * exp
+                    if rng.random() < 0.2 * mag * exp:
+                        agent.reputation = max(0.0, agent.reputation - 0.025 * mag)
             if money_cut:
                 agent.money = round(max(0.0, agent.money - money_cut), 2)
             if food_cut:

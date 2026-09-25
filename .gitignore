@@ -22,6 +22,7 @@ Thumbs.db
 # Simulation outputs
 trace.json
 *.trace.json
+saves/
 
 # Test / coverage
 .pytest_cache/
